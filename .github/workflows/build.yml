@@ -1,0 +1,39 @@
+name: Build APK
+
+# Run on every push to main, and allow manual runs from the Actions tab.
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # AGP 8.5 requires JDK 17.
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Provides Gradle 8.9 directly, so no committed gradle-wrapper.jar is needed.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      # The ubuntu-latest runner ships with the Android SDK (ANDROID_HOME set),
+      # including API 34, so AGP can build without extra setup.
+      - name: Build debug APK
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: shorts-clipper-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
