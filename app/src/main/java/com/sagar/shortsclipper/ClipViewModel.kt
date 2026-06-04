@@ -63,12 +63,12 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
     private var nextId = 1L
     private val processor = VideoProcessor(app)
 
-    fun setQuality(q: OutputQuality) {
+    fun updateQuality(q: OutputQuality) {
         quality = q
         Prefs.setQuality(getApplication<Application>(), q)
     }
 
-    fun setApiKey(key: String) {
+    fun updateApiKey(key: String) {
         apiKey = key
         Prefs.setApiKey(getApplication<Application>(), key)
     }

@@ -168,7 +168,7 @@ fun ClipperScreen(vm: ClipViewModel) {
                             OutputQuality.values().forEach { q ->
                                 FilterChip(
                                     selected = vm.quality == q,
-                                    onClick = { vm.setQuality(q) },
+                                    onClick = { vm.updateQuality(q) },
                                     label = { Text(q.label) },
                                     enabled = !vm.exporting
                                 )
@@ -177,7 +177,7 @@ fun ClipperScreen(vm: ClipViewModel) {
 
                         OutlinedTextField(
                             value = vm.apiKey,
-                            onValueChange = { vm.setApiKey(it) },
+                            onValueChange = { vm.updateApiKey(it) },
                             label = { Text("Gemini API key (for AI suggestions)") },
                             singleLine = true,
                             enabled = !vm.suggesting && !vm.exporting,
