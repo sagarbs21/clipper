@@ -61,8 +61,11 @@ object YoutubeRepository {
         }
         val chosen = subs.firstOrNull {
             it.format == MediaFormat.VTT && (it.languageTag?.startsWith("en") == true)
-        } ?: subs.firstOrNull { it.format == MediaFormat.VTT }
-        return chosen?.content?.takeIf { chosen.isUrl && it.isNotEmpty() }
+        } ?: subs.firstOrNull { it.format == MediaFormat.VTT } ?: return null
+
+        if (!chosen.isUrl) return null
+        val content = chosen.content
+        return if (content.isNullOrEmpty()) null else content
     }
 
     private fun resolutionValue(res: String?): Int {
