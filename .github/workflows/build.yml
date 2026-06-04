@@ -28,7 +28,11 @@ jobs:
 
       # The ubuntu-latest runner ships with the Android SDK (ANDROID_HOME set),
       # including API 34, so AGP can build without extra setup.
+      # GEMINI_API_KEY is read from a repo secret and baked into BuildConfig.
+      # If the secret is unset, the build still succeeds and you enter the key in-app.
       - name: Build debug APK
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: gradle assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK artifact

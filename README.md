@@ -1,15 +1,67 @@
-# YouTube Shorts Clipper (Android)
+# Shorts Clipper (Android)
 
-A native Android app (Kotlin + Jetpack Compose) that clips segments from a YouTube
-video and exports them in vertical **YouTube Shorts** format (1080x1920, 9:16).
-Clip times are fully user-defined.
+A native Android app (Kotlin + Jetpack Compose) that clips segments from **either a
+YouTube link or a video already on your device**, and exports them in vertical
+**Shorts** format (1080x1920, 9:16). Clip times are fully user-defined.
 
 ## How it works
 
-- **NewPipeExtractor** resolves a YouTube link into a playable stream URL — no Google API key.
+- **Online:** **NewPipeExtractor** resolves a YouTube link into a playable stream URL — no Google API key.
+- **Offline:** the system file picker (Storage Access Framework) lets you select any
+  video on the device; its `content://` URI feeds the same pipeline. No storage permission needed.
 - **Media3 Transformer** (Google's official, maintained library) trims the segment and
-  reformats it to 1080x1920 vertical. No ffmpeg/Python to install.
+  reformats it to vertical 9:16 (1080x1920 or 720x1280) for both sources. No ffmpeg/Python to install.
 - Finished clips are saved to **Movies/ShortsClipper** and appear in your gallery.
+
+## AI clip suggestions (optional)
+
+Tap **✨ Suggest clips with AI** to have the app detect the **content type**
+(movie, TV series, music, sports, gaming, podcast, etc.) and propose trend-style
+vertical Shorts with titles and hashtags. Suggestions auto-fill the clip list —
+**you review/edit them before exporting**.
+
+- Powered by **Google Gemini**. Get a free API key from
+  [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+
+### Providing the API key (pick one)
+
+You can supply the key in any of these ways — the app uses an in-app key if present,
+otherwise the one baked in at build time:
+
+1. **In-app (simplest):** paste it into **Settings → Gemini API key**. Saved locally on the
+   device; survives restarts. No rebuild needed.
+2. **Local build (Android Studio):** add to `local.properties` (already git-ignored):
+
+   ```properties
+   GEMINI_API_KEY=AIza...your_key...
+   ```
+
+   It's baked into `BuildConfig` so the app works without typing anything.
+3. **Cloud build (GitHub Actions):** add a repo secret named **`GEMINI_API_KEY`**
+   (Settings → Secrets and variables → Actions → New repository secret). The workflow
+   injects it at build time.
+
+> **Security:** never hardcode the key in source or commit it. `local.properties` and
+> GitHub secrets keep it out of git. Note that any key baked into an APK can be extracted
+> from that APK, so don't share the built APK publicly, and consider restricting the key in
+> Google AI Studio. The in-app option keeps the key only on your device.
+- For **YouTube** videos the app sends the **captions transcript** (when available) plus
+  title/duration so the model can reason about actual moments. For **local files** or
+  caption-less videos it works from the title/duration only (less accurate).
+- **Privacy:** AI mode sends that text (transcript + title) to Google's Gemini API.
+  Manual clipping sends nothing — it's fully on-device. The API key is stored only in
+  local app preferences.
+- **"Trends":** suggestions reflect the model's knowledge + prompt guidance, **not**
+  live trend scraping. Treat them as a smart starting point, not a guarantee.
+- The Gemini model is set in `AiClipPlanner.kt` (`MODEL = "gemini-2.5-flash"`) — change
+  it there if you prefer another model.
+
+## Settings
+
+- **Output quality:** `1080p` (1080x1920) or `720p` (720x1280, smaller files).
+- **Gemini API key:** enables AI suggestions (see above).
+- The app warns on clips longer than **3 minutes** (YouTube Shorts limit) and does a
+  quick **free-space check** before exporting.
 
 ## Frontend and backend — both are handled, on-device
 
@@ -18,10 +70,15 @@ This is a fully self-contained app. There is **no separate server to run or depl
 - **Frontend (UI):** Jetpack Compose — `MainActivity.kt` / `ClipperScreen`.
 - **"Backend" (logic), all on the device:**
   - `YoutubeRepository` + `DownloaderImpl` talk directly to YouTube (NewPipeExtractor).
-  - `VideoProcessor` does the trimming + 9:16 re-encode (Media3 Transformer).
+  - `LocalVideoRepository` reads metadata from a picked device video.
+  - `VideoProcessor` does the trimming + 9:16 re-encode (Media3 Transformer) for both sources.
   - `MediaStoreSaver` writes the finished clip into your gallery.
+  - `Prefs` stores settings (quality, API key) in local SharedPreferences.
+  - **AI (optional):** `CaptionsRepository` fetches a YouTube transcript and `AiClipPlanner`
+    calls Google Gemini to classify the content and propose clips.
 
-Everything runs locally on the tablet, so you don't host or maintain anything.
+Everything except the optional AI step runs locally on the tablet; there is still no
+server of your own to host or maintain.
 
 ## Optimized for Xiaomi Pad 6
 
@@ -60,9 +117,14 @@ To produce a shareable APK instead:
 
 ## Using the app
 
-1. Paste a YouTube URL and tap **Fetch Video**.
-2. Tap **+ Add clip** for each segment. Set **Start** and **End**
-   (e.g. `90`, `1:30`, or `0:01:30`) and an optional output name.
+1. Choose a source:
+   - Paste a **YouTube URL** and tap **Fetch Video**, or
+   - tap **Choose a video on this device** and pick a local file.
+2. Add clips either way:
+   - **Manually:** tap **+ Add clip** and set **Start** / **End**
+     (e.g. `90`, `1:30`, or `0:01:30`) and an optional output name, or
+   - **With AI:** tap **✨ Suggest clips with AI** to auto-fill suggested segments
+     (requires a Gemini API key in Settings).
 3. Pick a **crop mode**:
    - **Center crop** – fills 9:16 by cropping the sides (best for most videos)
    - **Fit (bars)** – keeps the whole frame with black bars

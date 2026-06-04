@@ -16,12 +16,10 @@ import androidx.media3.transformer.Transformer
 import com.sagar.shortsclipper.model.CropMode
 import java.io.File
 
-private const val OUT_WIDTH = 1080
-private const val OUT_HEIGHT = 1920
-
 /**
- * Trims a segment and reformats it to vertical 1080x1920 (YouTube Shorts) using
- * Media3 Transformer. The input can be a remote stream URL or a local file.
+ * Trims a segment and reformats it to a vertical 9:16 video (YouTube Shorts) using
+ * Media3 Transformer. The input can be a remote stream URL or a local file, and the
+ * output resolution is configurable (e.g. 1080x1920 or 720x1280).
  *
  * Note: [export] and [pollProgress] must be called from a thread with a Looper
  * (the main thread), because Transformer requires it.
@@ -41,6 +39,8 @@ class VideoProcessor(private val context: Context) {
         startMs: Long,
         endMs: Long,
         cropMode: CropMode,
+        outWidth: Int,
+        outHeight: Int,
         outputPath: String,
         callback: Callback
     ) {
@@ -60,7 +60,7 @@ class VideoProcessor(private val context: Context) {
             CropMode.STRETCH -> Presentation.LAYOUT_STRETCH_TO_FIT
         }
 
-        val presentation = Presentation.createForWidthAndHeight(OUT_WIDTH, OUT_HEIGHT, layout)
+        val presentation = Presentation.createForWidthAndHeight(outWidth, outHeight, layout)
         val effects = Effects(emptyList(), listOf<Effect>(presentation))
 
         val edited = EditedMediaItem.Builder(mediaItem)

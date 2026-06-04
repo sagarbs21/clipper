@@ -2,8 +2,10 @@ package com.sagar.shortsclipper
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -27,6 +29,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -40,9 +43,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.sagar.shortsclipper.model.CropMode
+import com.sagar.shortsclipper.model.OutputQuality
 import com.sagar.shortsclipper.util.formatMs
+import com.sagar.shortsclipper.util.parseTimeToMs
 
 // Tablets (e.g. Xiaomi Pad 6, 11" 2880x1800) are wide; cap content width so the
 // form stays readable and centered instead of stretching edge to edge.
@@ -72,11 +78,18 @@ fun ClipperScreen(vm: ClipViewModel) {
         view.keepScreenOn = vm.exporting
     }
 
+    // System file picker for offline videos on the device.
+    val pickVideo = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let { vm.loadLocalVideo(it) }
+    }
+
     val scroll = rememberScrollState()
 
     Scaffold(
         topBar = {
-            CenterAlignedTopAppBar(title = { Text("YouTube Shorts Clipper") })
+            CenterAlignedTopAppBar(title = { Text("Shorts Clipper") })
         }
     ) { innerPadding ->
         // Outer column applies window/scaffold insets and centers the constrained content.
@@ -96,7 +109,7 @@ fun ClipperScreen(vm: ClipViewModel) {
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = "Paste a link, set clip times, and export vertical 9:16 Shorts.",
+                    text = "Use a YouTube link or a video on this device, set clip times, and export vertical 9:16 Shorts.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -119,7 +132,63 @@ fun ClipperScreen(vm: ClipViewModel) {
                         CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(8.dp))
                     }
-                    Text(if (vm.loading) "Fetching..." else "Fetch Video")
+                    Text(if (vm.loading) "Loading..." else "Fetch Video")
+                }
+
+                Text(
+                    text = "— or —",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Center
+                )
+
+                OutlinedButton(
+                    onClick = { pickVideo.launch(arrayOf("video/*")) },
+                    enabled = !vm.loading && !vm.exporting,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Choose a video on this device")
+                }
+
+                // ---------- Settings ----------
+                OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("Settings", fontWeight = FontWeight.SemiBold)
+
+                        Text(
+                            "Output quality",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutputQuality.values().forEach { q ->
+                                FilterChip(
+                                    selected = vm.quality == q,
+                                    onClick = { vm.setQuality(q) },
+                                    label = { Text(q.label) },
+                                    enabled = !vm.exporting
+                                )
+                            }
+                        }
+
+                        OutlinedTextField(
+                            value = vm.apiKey,
+                            onValueChange = { vm.setApiKey(it) },
+                            label = { Text("Gemini API key (for AI suggestions)") },
+                            singleLine = true,
+                            enabled = !vm.suggesting && !vm.exporting,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text(
+                            "Free key from aistudio.google.com/apikey. Used only for AI suggestions; manual clipping stays fully on-device.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
 
                 val meta = vm.meta
@@ -134,6 +203,33 @@ fun ClipperScreen(vm: ClipViewModel) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+                    }
+
+                    // ---------- AI suggestions ----------
+                    Button(
+                        onClick = { vm.suggestClips() },
+                        enabled = !vm.suggesting && !vm.exporting && vm.apiKey.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (vm.suggesting) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text(if (vm.suggesting) "Analyzing..." else "✨ Suggest clips with AI")
+                    }
+                    if (vm.apiKey.isBlank()) {
+                        Text(
+                            "Add a Gemini API key in Settings to enable AI suggestions.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    vm.contentType?.let { type ->
+                        Text(
+                            "Detected content type: $type",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
                     }
 
                     Text("Crop mode", fontWeight = FontWeight.SemiBold)
@@ -210,6 +306,16 @@ fun ClipperScreen(vm: ClipViewModel) {
                                     enabled = !vm.exporting,
                                     modifier = Modifier.fillMaxWidth()
                                 )
+
+                                val startMs = parseTimeToMs(clip.start)
+                                val endMs = parseTimeToMs(clip.end)
+                                if (startMs != null && endMs != null && endMs - startMs > 180_000) {
+                                    Text(
+                                        "Longer than 3 min — may not qualify as a YouTube Short.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                }
                             }
                         }
                     }

@@ -1,6 +1,7 @@
 package com.sagar.shortsclipper.data
 
 import com.sagar.shortsclipper.model.VideoMeta
+import org.schabi.newpipe.extractor.MediaFormat
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.stream.StreamInfo
@@ -44,9 +45,24 @@ object YoutubeRepository {
             title = info.name ?: "Untitled",
             uploader = info.uploaderName ?: "Unknown",
             durationSec = info.duration,
-            streamUrl = best.content,
-            resolution = best.getResolution() ?: "?"
+            sourceUri = best.content,
+            resolution = best.getResolution() ?: "?",
+            isLocal = false,
+            subtitleVttUrl = pickVttSubtitleUrl(info)
         )
+    }
+
+    /** Best-effort: prefer an English WebVTT caption track, else any WebVTT track. */
+    private fun pickVttSubtitleUrl(info: StreamInfo): String? {
+        val subs = try {
+            info.subtitles
+        } catch (e: Exception) {
+            return null
+        }
+        val chosen = subs.firstOrNull {
+            it.format == MediaFormat.VTT && (it.languageTag?.startsWith("en") == true)
+        } ?: subs.firstOrNull { it.format == MediaFormat.VTT }
+        return chosen?.content?.takeIf { chosen.isUrl && it.isNotEmpty() }
     }
 
     private fun resolutionValue(res: String?): Int {

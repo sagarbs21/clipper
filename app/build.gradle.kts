@@ -1,7 +1,24 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
+
+// Gemini API key, read from (1) the GEMINI_API_KEY env var (used by CI), or
+// (2) local.properties (used for local builds). Both are kept out of version control,
+// so the key is never committed to git. Leave unset to enter the key in-app instead.
+val geminiApiKey: String = (System.getenv("GEMINI_API_KEY")
+    ?: run {
+        val lp = rootProject.file("local.properties")
+        if (lp.exists()) {
+            Properties().apply { FileInputStream(lp).use { load(it) } }
+                .getProperty("GEMINI_API_KEY", "")
+        } else {
+            ""
+        }
+    }).trim()
 
 android {
     namespace = "com.sagar.shortsclipper"
@@ -14,6 +31,9 @@ android {
         versionCode = 1
         versionName = "1.0"
         vectorDrawables { useSupportLibrary = true }
+
+        // Optional baked-in default key; empty unless provided via env/local.properties.
+        buildConfigField("String", "GEMINI_API_KEY", "\"$geminiApiKey\"")
     }
 
     buildTypes {
@@ -38,6 +58,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     composeOptions {
