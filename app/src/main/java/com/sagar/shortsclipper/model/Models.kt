@@ -17,8 +17,9 @@ data class VideoMeta(
 
 /** How the source frame is mapped into the 9:16 output. */
 enum class CropMode(val label: String) {
-    CENTER("Center crop"),
-    FIT("Fit (bars)"),
+    FIT("Fit · no crop"),
+    BLUR("Blurred fill"),
+    CENTER("Crop to fill"),
     STRETCH("Stretch")
 }
 
@@ -26,6 +27,22 @@ enum class CropMode(val label: String) {
 enum class OutputQuality(val label: String, val width: Int, val height: Int) {
     FHD("1080p", 1080, 1920),
     HD("720p (smaller)", 720, 1280)
+}
+
+/**
+ * AI backend used for clip suggestions. All except Gemini speak the OpenAI-compatible
+ * chat-completions API, so they share one code path.
+ */
+enum class AiProvider(
+    val label: String,
+    val baseUrl: String,      // empty for Gemini (uses its own REST endpoint)
+    val defaultModel: String,
+    val keyUrl: String
+) {
+    GEMINI("Gemini", "", "gemini-2.5-flash", "aistudio.google.com/apikey"),
+    GROQ("Groq (free)", "https://api.groq.com/openai/v1", "llama-3.3-70b-versatile", "console.groq.com/keys"),
+    OPENROUTER("OpenRouter", "https://openrouter.ai/api/v1", "meta-llama/llama-3.3-70b-instruct:free", "openrouter.ai/keys"),
+    OPENAI("OpenAI", "https://api.openai.com/v1", "gpt-4o-mini", "platform.openai.com/api-keys")
 }
 
 /** A single user-defined clip. Times are free text (seconds, mm:ss, or h:mm:ss). */

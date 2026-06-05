@@ -1,6 +1,7 @@
 package com.sagar.shortsclipper.data
 
 import com.sagar.shortsclipper.model.AiPlan
+import com.sagar.shortsclipper.model.AiProvider
 import com.sagar.shortsclipper.model.AiSuggestion
 import com.sagar.shortsclipper.model.VideoMeta
 import okhttp3.MediaType.Companion.toMediaType
@@ -9,29 +10,38 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
- * Uses Google Gemini to (1) classify the content type and (2) propose vertical
- * Shorts clips. For YouTube videos a caption transcript is included so the model
- * can reason about actual moments; otherwise it works from title + duration.
+ * Classifies the content type and proposes vertical Shorts clips using a configurable
+ * AI provider. Gemini uses its own REST API; Groq/OpenRouter/OpenAI use the shared
+ * OpenAI-compatible chat-completions API.
  *
- * Requires a free API key from Google AI Studio (https://aistudio.google.com/apikey).
- * All calls are best-effort and throw a readable message on failure.
+ * For YouTube videos a caption transcript is included so the model can reason about
+ * actual moments; otherwise it works from title + duration. All calls are best-effort,
+ * retry transient errors, and throw a readable message on failure.
  */
 object AiClipPlanner {
 
-    // Change this if a newer/older Gemini model is preferred or this one is retired.
-    private const val MODEL = "gemini-2.5-flash"
-    private const val ENDPOINT =
+    private const val GEMINI_ENDPOINT =
         "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s"
 
+    private const val MAX_ATTEMPTS = 3
+
     private val client = OkHttpClient.Builder()
-        .callTimeout(60, TimeUnit.SECONDS)
+        .callTimeout(90, TimeUnit.SECONDS)
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(90, TimeUnit.SECONDS)
         .build()
 
-    /** Blocking network call. Run on a background dispatcher. */
+    /** Thrown for transient failures (overload/timeout) that are worth retrying. */
+    private class RetryableException(message: String) : Exception(message)
+
+    /** Blocking network call. Run on a background dispatcher. Retries transient errors. */
     fun plan(
+        provider: AiProvider,
+        model: String,
         meta: VideoMeta,
         transcript: String?,
         apiKey: String,
@@ -40,7 +50,38 @@ object AiClipPlanner {
     ): AiPlan {
         val prompt = buildPrompt(meta, transcript, maxClips, maxClipSec)
 
-        val requestJson = JSONObject().apply {
+        var lastRetryable: RetryableException? = null
+        for (attempt in 1..MAX_ATTEMPTS) {
+            try {
+                return if (provider == AiProvider.GEMINI) {
+                    executeGemini(prompt, model, apiKey, meta.durationSec, maxClipSec)
+                } else {
+                    executeOpenAiCompatible(
+                        provider.baseUrl, model, prompt, apiKey, meta.durationSec, maxClipSec
+                    )
+                }
+            } catch (e: RetryableException) {
+                lastRetryable = e
+                if (attempt < MAX_ATTEMPTS) {
+                    // Backoff: 2s, 4s. Gives an overloaded model time to recover.
+                    Thread.sleep(2000L * attempt)
+                }
+            }
+        }
+        throw RuntimeException(
+            (lastRetryable?.message ?: "${provider.label} is busy") +
+                ". Please try again in a moment."
+        )
+    }
+
+    private fun executeGemini(
+        prompt: String,
+        model: String,
+        apiKey: String,
+        durationSec: Long,
+        maxClipSec: Int
+    ): AiPlan {
+        val body = JSONObject().apply {
             put(
                 "contents",
                 JSONArray().put(
@@ -56,22 +97,72 @@ object AiClipPlanner {
                     .put("temperature", 0.8)
                     .put("responseMimeType", "application/json")
             )
-        }
+        }.toString()
 
-        val url = ENDPOINT.format(MODEL, apiKey)
         val request = Request.Builder()
-            .url(url)
-            .post(requestJson.toString().toRequestBody("application/json".toMediaType()))
+            .url(GEMINI_ENDPOINT.format(model, apiKey))
+            .post(body.toRequestBody("application/json".toMediaType()))
             .build()
 
-        client.newCall(request).execute().use { response ->
-            val raw = response.body?.string().orEmpty()
-            if (!response.isSuccessful) {
-                throw RuntimeException("Gemini error ${response.code}: ${extractApiError(raw)}")
+        val raw = executeWithRetryableErrors(request, "Gemini")
+        val modelText = extractModelText(raw) ?: throw RuntimeException("AI returned no content.")
+        return parsePlan(modelText, durationSec, maxClipSec)
+    }
+
+    private fun executeOpenAiCompatible(
+        baseUrl: String,
+        model: String,
+        prompt: String,
+        apiKey: String,
+        durationSec: Long,
+        maxClipSec: Int
+    ): AiPlan {
+        val body = JSONObject().apply {
+            put("model", model)
+            put("temperature", 0.8)
+            put("response_format", JSONObject().put("type", "json_object"))
+            put(
+                "messages",
+                JSONArray().put(JSONObject().put("role", "user").put("content", prompt))
+            )
+        }.toString()
+
+        val request = Request.Builder()
+            .url("$baseUrl/chat/completions")
+            .header("Authorization", "Bearer $apiKey")
+            .header("Content-Type", "application/json")
+            .post(body.toRequestBody("application/json".toMediaType()))
+            .build()
+
+        val raw = executeWithRetryableErrors(request, "AI provider")
+        val content = try {
+            JSONObject(raw)
+                .getJSONArray("choices")
+                .getJSONObject(0)
+                .getJSONObject("message")
+                .getString("content")
+        } catch (e: Exception) {
+            throw RuntimeException("AI returned no content.")
+        }
+        return parsePlan(content, durationSec, maxClipSec)
+    }
+
+    /** Runs the request; maps timeouts and 429/5xx to retryable errors. Returns the body. */
+    private fun executeWithRetryableErrors(request: Request, label: String): String {
+        val response = try {
+            client.newCall(request).execute()
+        } catch (e: IOException) {
+            throw RetryableException("Network/timeout (${e.message ?: "no response"})")
+        }
+        response.use {
+            val raw = it.body?.string().orEmpty()
+            if (!it.isSuccessful) {
+                if (it.code == 429 || it.code in 500..599) {
+                    throw RetryableException("$label busy (HTTP ${it.code})")
+                }
+                throw RuntimeException("$label error ${it.code}: ${extractApiError(raw)}")
             }
-            val modelText = extractModelText(raw)
-                ?: throw RuntimeException("AI returned no content.")
-            return parsePlan(modelText, meta.durationSec, maxClipSec)
+            return raw
         }
     }
 
@@ -138,8 +229,15 @@ object AiClipPlanner {
         }
     }
 
+    /** Some models wrap JSON in ```json fences or add prose; extract the object. */
+    private fun extractJsonObject(text: String): String {
+        val start = text.indexOf('{')
+        val end = text.lastIndexOf('}')
+        return if (start >= 0 && end > start) text.substring(start, end + 1) else text
+    }
+
     private fun parsePlan(modelText: String, durationSec: Long, maxClipSec: Int): AiPlan {
-        val root = JSONObject(modelText)
+        val root = JSONObject(extractJsonObject(modelText))
         val contentType = root.optString("contentType", "other").ifBlank { "other" }
         val clipsArray = root.optJSONArray("clips") ?: JSONArray()
 

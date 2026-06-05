@@ -87,11 +87,13 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("com.google.android.material:material:1.12.0")
 
-    // Media3 Transformer: trim + reformat to vertical 1080x1920 (official, maintained)
+    // Media3 Transformer: trim + reformat to vertical 9:16 (official, maintained)
     implementation("androidx.media3:media3-transformer:1.3.1")
     implementation("androidx.media3:media3-effect:1.3.1")
     implementation("androidx.media3:media3-common:1.3.1")
     implementation("androidx.media3:media3-exoplayer:1.3.1")
+    // In-app preview player
+    implementation("androidx.media3:media3-ui:1.3.1")
 
     // NewPipeExtractor: resolve YouTube stream URLs without an API key (JitPack)
     implementation("com.github.teamnewpipe:NewPipeExtractor:v0.26.2")

@@ -18,6 +18,7 @@ import com.sagar.shortsclipper.data.MediaStoreSaver
 import com.sagar.shortsclipper.data.Prefs
 import com.sagar.shortsclipper.data.VideoProcessor
 import com.sagar.shortsclipper.data.YoutubeRepository
+import com.sagar.shortsclipper.model.AiProvider
 import com.sagar.shortsclipper.model.ClipSpec
 import com.sagar.shortsclipper.model.CropMode
 import com.sagar.shortsclipper.model.OutputQuality
@@ -44,12 +45,18 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var status by mutableStateOf("")
         private set
-    var cropMode by mutableStateOf(CropMode.CENTER)
+    var cropMode by mutableStateOf(CropMode.FIT)
 
     // Settings
     var quality by mutableStateOf(Prefs.getQuality(app))
         private set
-    var apiKey by mutableStateOf(Prefs.getApiKey(app))
+
+    private val initialProvider = Prefs.getProvider(app)
+    var provider by mutableStateOf(initialProvider)
+        private set
+    var apiKey by mutableStateOf(Prefs.getApiKey(app, initialProvider))
+        private set
+    var model by mutableStateOf(Prefs.getModel(app, initialProvider))
         private set
 
     // AI state
@@ -68,9 +75,21 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
         Prefs.setQuality(getApplication<Application>(), q)
     }
 
+    fun updateProvider(p: AiProvider) {
+        provider = p
+        apiKey = Prefs.getApiKey(getApplication<Application>(), p)
+        model = Prefs.getModel(getApplication<Application>(), p)
+        Prefs.setProvider(getApplication<Application>(), p)
+    }
+
     fun updateApiKey(key: String) {
         apiKey = key
-        Prefs.setApiKey(getApplication<Application>(), key)
+        Prefs.setApiKey(getApplication<Application>(), provider, key)
+    }
+
+    fun updateModel(m: String) {
+        model = m
+        Prefs.setModel(getApplication<Application>(), provider, m)
     }
 
     fun fetch() {
@@ -135,7 +154,7 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
         }
         val key = apiKey.trim()
         if (key.isEmpty()) {
-            status = "Add your Gemini API key in Settings to use AI suggestions."
+            status = "Add your ${provider.label} API key in Settings to use AI suggestions."
             return
         }
 
@@ -149,6 +168,8 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 val plan = withContext(Dispatchers.IO) {
                     AiClipPlanner.plan(
+                        provider = provider,
+                        model = model.ifBlank { provider.defaultModel },
                         meta = m,
                         transcript = transcript,
                         apiKey = key,

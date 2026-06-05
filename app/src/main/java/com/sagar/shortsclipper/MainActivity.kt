@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -37,14 +38,22 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.MediaItem as ExoMediaItem
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
+import com.sagar.shortsclipper.model.AiProvider
 import com.sagar.shortsclipper.model.CropMode
 import com.sagar.shortsclipper.model.OutputQuality
 import com.sagar.shortsclipper.util.formatMs
@@ -83,6 +92,23 @@ fun ClipperScreen(vm: ClipViewModel) {
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         uri?.let { vm.loadLocalVideo(it) }
+    }
+
+    // Preview player (works for both YouTube stream URLs and local content:// URIs).
+    val context = LocalContext.current
+    val exoPlayer = remember { ExoPlayer.Builder(context).build() }
+    DisposableEffect(Unit) {
+        onDispose { exoPlayer.release() }
+    }
+    val sourceUri = vm.meta?.sourceUri
+    LaunchedEffect(sourceUri) {
+        if (sourceUri != null) {
+            exoPlayer.setMediaItem(ExoMediaItem.fromUri(sourceUri))
+            exoPlayer.prepare()
+            exoPlayer.playWhenReady = false
+        } else {
+            exoPlayer.clearMediaItems()
+        }
     }
 
     val scroll = rememberScrollState()
@@ -175,16 +201,40 @@ fun ClipperScreen(vm: ClipViewModel) {
                             }
                         }
 
+                        Text(
+                            "AI provider",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            AiProvider.values().forEach { p ->
+                                FilterChip(
+                                    selected = vm.provider == p,
+                                    onClick = { vm.updateProvider(p) },
+                                    label = { Text(p.label) },
+                                    enabled = !vm.suggesting && !vm.exporting
+                                )
+                            }
+                        }
+
                         OutlinedTextField(
                             value = vm.apiKey,
                             onValueChange = { vm.updateApiKey(it) },
-                            label = { Text("Gemini API key (for AI suggestions)") },
+                            label = { Text("${vm.provider.label} API key") },
+                            singleLine = true,
+                            enabled = !vm.suggesting && !vm.exporting,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = vm.model,
+                            onValueChange = { vm.updateModel(it) },
+                            label = { Text("Model") },
                             singleLine = true,
                             enabled = !vm.suggesting && !vm.exporting,
                             modifier = Modifier.fillMaxWidth()
                         )
                         Text(
-                            "Free key from aistudio.google.com/apikey. Used only for AI suggestions; manual clipping stays fully on-device.",
+                            "Free key: ${vm.provider.keyUrl}. Tip: Groq's free tier is fast and rarely overloaded. Used only for AI; manual clipping stays on-device.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -205,6 +255,24 @@ fun ClipperScreen(vm: ClipViewModel) {
                         }
                     }
 
+                    // ---------- Preview ----------
+                    AndroidView(
+                        factory = { ctx ->
+                            PlayerView(ctx).apply {
+                                player = exoPlayer
+                                useController = true
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(220.dp)
+                    )
+                    Text(
+                        "Scrub the preview, then use “Set start/end from preview” on a clip below.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
                     // ---------- AI suggestions ----------
                     Button(
                         onClick = { vm.suggestClips() },
@@ -219,7 +287,7 @@ fun ClipperScreen(vm: ClipViewModel) {
                     }
                     if (vm.apiKey.isBlank()) {
                         Text(
-                            "Add a Gemini API key in Settings to enable AI suggestions.",
+                            "Add a ${vm.provider.label} API key in Settings to enable AI suggestions.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -297,6 +365,22 @@ fun ClipperScreen(vm: ClipViewModel) {
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
                                         modifier = Modifier.weight(1f)
                                     )
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    TextButton(
+                                        onClick = {
+                                            val pos = exoPlayer.currentPosition.coerceAtLeast(0L)
+                                            vm.updateClip(clip.id, start = formatMs(pos))
+                                        },
+                                        enabled = !vm.exporting
+                                    ) { Text("Set start from preview") }
+                                    TextButton(
+                                        onClick = {
+                                            val pos = exoPlayer.currentPosition.coerceAtLeast(0L)
+                                            vm.updateClip(clip.id, end = formatMs(pos))
+                                        },
+                                        enabled = !vm.exporting
+                                    ) { Text("Set end") }
                                 }
                                 OutlinedTextField(
                                     value = clip.name,

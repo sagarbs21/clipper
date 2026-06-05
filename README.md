@@ -11,7 +11,19 @@ YouTube link or a video already on your device**, and exports them in vertical
   video on the device; its `content://` URI feeds the same pipeline. No storage permission needed.
 - **Media3 Transformer** (Google's official, maintained library) trims the segment and
   reformats it to vertical 9:16 (1080x1920 or 720x1280) for both sources. No ffmpeg/Python to install.
+- An in-app **preview player** lets you scrub the source and set clip start/end from the playhead.
 - Finished clips are saved to **Movies/ShortsClipper** and appear in your gallery.
+
+## Aspect-ratio modes (no forced cropping)
+
+Choose how the source maps into 9:16 — the default keeps the **whole frame**:
+
+| Mode | What it does |
+|---|---|
+| **Fit · no crop** (default) | Whole frame, scaled to fit, with bars. Nothing is cut. |
+| **Blurred fill** | Whole frame on top of a blurred, zoomed copy of itself (Reels/Shorts style). Nothing is cut. |
+| **Crop to fill** | Fills the frame by cropping the sides/top. |
+| **Stretch** | Stretches to fill (may distort). |
 
 ## AI clip suggestions (optional)
 
@@ -20,8 +32,13 @@ Tap **✨ Suggest clips with AI** to have the app detect the **content type**
 vertical Shorts with titles and hashtags. Suggestions auto-fill the clip list —
 **you review/edit them before exporting**.
 
-- Powered by **Google Gemini**. Get a free API key from
-  [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+- **Choose your AI provider** in Settings — Gemini, **Groq (free, fast, rarely overloaded)**,
+  OpenRouter, or OpenAI. If Gemini returns 503 (overloaded), switch to **Groq**.
+  Each provider keeps its own key + model (editable). Get a free key:
+  - Gemini → [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+  - Groq → [console.groq.com/keys](https://console.groq.com/keys)
+  - OpenRouter → [openrouter.ai/keys](https://openrouter.ai/keys)
+  - OpenAI → [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
 
 ### Providing the API key (pick one)
 
@@ -53,8 +70,10 @@ otherwise the one baked in at build time:
   local app preferences.
 - **"Trends":** suggestions reflect the model's knowledge + prompt guidance, **not**
   live trend scraping. Treat them as a smart starting point, not a guarantee.
-- The Gemini model is set in `AiClipPlanner.kt` (`MODEL = "gemini-2.5-flash"`) — change
-  it there if you prefer another model.
+- **Busy/timeout (HTTP 503):** Gemini's free tier can be momentarily overloaded. The app
+  retries automatically with backoff; if it still fails, wait a few seconds and tap again.
+- The **model is editable in Settings** per provider (e.g. `gemini-2.5-flash`,
+  `llama-3.3-70b-versatile` for Groq). Each provider remembers its own key and model.
 
 ## Settings
 
@@ -120,11 +139,13 @@ To produce a shareable APK instead:
 1. Choose a source:
    - Paste a **YouTube URL** and tap **Fetch Video**, or
    - tap **Choose a video on this device** and pick a local file.
-2. Add clips either way:
-   - **Manually:** tap **+ Add clip** and set **Start** / **End**
-     (e.g. `90`, `1:30`, or `0:01:30`) and an optional output name, or
+2. Use the **preview** to scrub to a moment, then add clips either way:
+   - **Manually:** tap **+ Add clip**, type **Start** / **End** (e.g. `90`, `1:30`, `0:01:30`)
+     or tap **Set start/end from preview** to grab the current playhead position.
    - **With AI:** tap **✨ Suggest clips with AI** to auto-fill suggested segments
      (requires a Gemini API key in Settings).
+3. Pick an aspect-ratio mode (default **Fit · no crop**). Choose **Blurred fill** for the
+   Reels-style look that keeps the whole frame.
 3. Pick a **crop mode**:
    - **Center crop** – fills 9:16 by cropping the sides (best for most videos)
    - **Fit (bars)** – keeps the whole frame with black bars
