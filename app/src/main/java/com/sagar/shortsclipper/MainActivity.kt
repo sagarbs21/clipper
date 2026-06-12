@@ -56,6 +56,7 @@ import androidx.media3.ui.PlayerView
 import com.sagar.shortsclipper.model.AiProvider
 import com.sagar.shortsclipper.model.CropMode
 import com.sagar.shortsclipper.model.OutputQuality
+import com.sagar.shortsclipper.model.UploadStatus
 import com.sagar.shortsclipper.util.formatMs
 import com.sagar.shortsclipper.util.parseTimeToMs
 
@@ -151,7 +152,7 @@ fun ClipperScreen(vm: ClipViewModel) {
 
                 Button(
                     onClick = { vm.fetch() },
-                    enabled = !vm.loading && !vm.exporting,
+                    enabled = !vm.loading && !vm.exporting && !vm.autoRunning,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     if (vm.loading) {
@@ -159,6 +160,30 @@ fun ClipperScreen(vm: ClipViewModel) {
                         Spacer(Modifier.width(8.dp))
                     }
                     Text(if (vm.loading) "Loading..." else "Fetch Video")
+                }
+
+                Button(
+                    onClick = { vm.autoClip() },
+                    enabled = vm.url.isNotBlank() && vm.apiKey.isNotBlank() &&
+                        !vm.loading && !vm.suggesting && !vm.exporting && !vm.autoRunning,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (vm.autoRunning) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(if (vm.autoRunning) "Auto-clipping..." else "\u26A1 Auto-clip with AI")
+                }
+                Text(
+                    "One tap: fetch → AI picks clips → export → write captions. Then review & upload below.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (vm.autoRunning) {
+                    LinearProgressIndicator(
+                        progress = vm.progress / 100f,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
 
                 Text(
@@ -171,7 +196,7 @@ fun ClipperScreen(vm: ClipViewModel) {
 
                 OutlinedButton(
                     onClick = { pickVideo.launch(arrayOf("video/*")) },
-                    enabled = !vm.loading && !vm.exporting,
+                    enabled = !vm.loading && !vm.exporting && !vm.autoRunning,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("Choose a video on this device")
@@ -241,6 +266,88 @@ fun ClipperScreen(vm: ClipViewModel) {
                     }
                 }
 
+                // ---------- YouTube account ----------
+                OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("YouTube account", fontWeight = FontWeight.SemiBold)
+
+                        if (vm.ytConnected) {
+                            Text(
+                                "Connected: ${vm.ytChannelTitle}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                "Upload visibility",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf("private", "unlisted", "public").forEach { p ->
+                                    FilterChip(
+                                        selected = vm.uploadPrivacy == p,
+                                        onClick = { vm.updateUploadPrivacy(p) },
+                                        label = { Text(p) }
+                                    )
+                                }
+                            }
+                            OutlinedButton(onClick = { vm.disconnectYouTube() }) {
+                                Text("Disconnect")
+                            }
+                        } else {
+                            OutlinedTextField(
+                                value = vm.ytClientId,
+                                onValueChange = { vm.updateYtClientId(it) },
+                                label = { Text("OAuth Client ID") },
+                                singleLine = true,
+                                enabled = !vm.ytConnecting,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            OutlinedTextField(
+                                value = vm.ytClientSecret,
+                                onValueChange = { vm.updateYtClientSecret(it) },
+                                label = { Text("OAuth Client Secret") },
+                                singleLine = true,
+                                enabled = !vm.ytConnecting,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            val code = vm.ytUserCode
+                            if (code != null) {
+                                Text(
+                                    "Open ${vm.ytVerificationUrl ?: "google.com/device"} and enter:",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Text(
+                                    code,
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            Button(
+                                onClick = { vm.connectYouTube() },
+                                enabled = !vm.ytConnecting,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                if (vm.ytConnecting) {
+                                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                    Spacer(Modifier.width(8.dp))
+                                }
+                                Text(if (vm.ytConnecting) "Waiting for approval..." else "Connect YouTube")
+                            }
+                            Text(
+                                "Create an OAuth client of type \u201CTV and Limited Input devices\u201D in Google Cloud, then paste its ID + secret here. See README.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
                 val meta = vm.meta
                 if (meta != null) {
                     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
@@ -276,7 +383,7 @@ fun ClipperScreen(vm: ClipViewModel) {
                     // ---------- AI suggestions ----------
                     Button(
                         onClick = { vm.suggestClips() },
-                        enabled = !vm.suggesting && !vm.exporting && vm.apiKey.isNotBlank(),
+                        enabled = !vm.suggesting && !vm.exporting && !vm.autoRunning && vm.apiKey.isNotBlank(),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         if (vm.suggesting) {
@@ -324,7 +431,7 @@ fun ClipperScreen(vm: ClipViewModel) {
                             fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.weight(1f)
                         )
-                        TextButton(onClick = { vm.addClip() }, enabled = !vm.exporting) {
+                        TextButton(onClick = { vm.addClip() }, enabled = !vm.exporting && !vm.autoRunning) {
                             Text("+ Add clip")
                         }
                     }
@@ -412,7 +519,7 @@ fun ClipperScreen(vm: ClipViewModel) {
 
                     Button(
                         onClick = { vm.export() },
-                        enabled = !vm.exporting && vm.clips.isNotEmpty(),
+                        enabled = !vm.exporting && !vm.autoRunning && vm.clips.isNotEmpty(),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(if (vm.exporting) "Exporting..." else "Export Clips")
@@ -428,6 +535,91 @@ fun ClipperScreen(vm: ClipViewModel) {
 
                 if (vm.status.isNotEmpty()) {
                     Text(vm.status, style = MaterialTheme.typography.bodyMedium)
+                }
+
+                // ---------- Exported clips: metadata + upload ----------
+                if (vm.exportedClips.isNotEmpty()) {
+                    Text("Ready to upload", fontWeight = FontWeight.SemiBold)
+                    vm.exportedClips.forEachIndexed { idx, ec ->
+                        val busy = ec.status == UploadStatus.UPLOADING
+                        OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        "Clip ${idx + 1}",
+                                        fontWeight = FontWeight.Medium,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    TextButton(
+                                        onClick = { vm.removeExportedClip(ec.id) },
+                                        enabled = !busy
+                                    ) { Text("Remove") }
+                                }
+                                OutlinedTextField(
+                                    value = ec.title,
+                                    onValueChange = { vm.editExportedClip(ec.id, title = it) },
+                                    label = { Text("Title") },
+                                    singleLine = true,
+                                    enabled = !busy,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                OutlinedTextField(
+                                    value = ec.description,
+                                    onValueChange = { vm.editExportedClip(ec.id, description = it) },
+                                    label = { Text("Description") },
+                                    enabled = !busy,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                OutlinedTextField(
+                                    value = ec.tags,
+                                    onValueChange = { vm.editExportedClip(ec.id, tags = it) },
+                                    label = { Text("Tags (comma-separated)") },
+                                    singleLine = true,
+                                    enabled = !busy,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedButton(
+                                        onClick = { vm.generateMetadataFor(ec.id) },
+                                        enabled = !busy && vm.apiKey.isNotBlank()
+                                    ) { Text("Generate with AI") }
+                                    Button(
+                                        onClick = { vm.uploadClip(ec.id) },
+                                        enabled = vm.ytConnected && !busy
+                                    ) {
+                                        if (busy) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(18.dp),
+                                                strokeWidth = 2.dp
+                                            )
+                                            Spacer(Modifier.width(8.dp))
+                                        }
+                                        Text(
+                                            when (ec.status) {
+                                                UploadStatus.DONE -> "Uploaded"
+                                                UploadStatus.UPLOADING -> "Uploading..."
+                                                else -> "Upload"
+                                            }
+                                        )
+                                    }
+                                }
+                                if (ec.message.isNotBlank()) {
+                                    Text(
+                                        ec.message,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (ec.status == UploadStatus.FAILED) {
+                                            MaterialTheme.colorScheme.error
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
                 Spacer(Modifier.size(24.dp))

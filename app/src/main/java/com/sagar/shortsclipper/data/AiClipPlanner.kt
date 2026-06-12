@@ -4,6 +4,7 @@ import com.sagar.shortsclipper.model.AiPlan
 import com.sagar.shortsclipper.model.AiProvider
 import com.sagar.shortsclipper.model.AiSuggestion
 import com.sagar.shortsclipper.model.VideoMeta
+import com.sagar.shortsclipper.model.VideoMetadata
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -49,22 +50,43 @@ object AiClipPlanner {
         maxClipSec: Int
     ): AiPlan {
         val prompt = buildPrompt(meta, transcript, maxClips, maxClipSec)
+        val text = completeWithRetry(provider, model, prompt, apiKey)
+        return parsePlan(text, meta.durationSec, maxClipSec)
+    }
 
+    /** Generates YouTube upload metadata (title, description, tags) for one clip. */
+    fun generateMetadata(
+        provider: AiProvider,
+        model: String,
+        apiKey: String,
+        sourceTitle: String,
+        clipHint: String,
+        transcript: String?
+    ): VideoMetadata {
+        val prompt = buildMetadataPrompt(sourceTitle, clipHint, transcript)
+        val text = completeWithRetry(provider, model, prompt, apiKey)
+        return parseMetadata(text)
+    }
+
+    /** Runs one completion against the chosen provider, retrying transient errors. */
+    private fun completeWithRetry(
+        provider: AiProvider,
+        model: String,
+        prompt: String,
+        apiKey: String
+    ): String {
         var lastRetryable: RetryableException? = null
         for (attempt in 1..MAX_ATTEMPTS) {
             try {
                 return if (provider == AiProvider.GEMINI) {
-                    executeGemini(prompt, model, apiKey, meta.durationSec, maxClipSec)
+                    geminiText(prompt, model, apiKey)
                 } else {
-                    executeOpenAiCompatible(
-                        provider.baseUrl, model, prompt, apiKey, meta.durationSec, maxClipSec
-                    )
+                    openAiText(provider.baseUrl, model, prompt, apiKey)
                 }
             } catch (e: RetryableException) {
                 lastRetryable = e
                 if (attempt < MAX_ATTEMPTS) {
-                    // Backoff: 2s, 4s. Gives an overloaded model time to recover.
-                    Thread.sleep(2000L * attempt)
+                    Thread.sleep(2000L * attempt) // backoff: 2s, 4s
                 }
             }
         }
@@ -74,13 +96,7 @@ object AiClipPlanner {
         )
     }
 
-    private fun executeGemini(
-        prompt: String,
-        model: String,
-        apiKey: String,
-        durationSec: Long,
-        maxClipSec: Int
-    ): AiPlan {
+    private fun geminiText(prompt: String, model: String, apiKey: String): String {
         val body = JSONObject().apply {
             put(
                 "contents",
@@ -105,18 +121,10 @@ object AiClipPlanner {
             .build()
 
         val raw = executeWithRetryableErrors(request, "Gemini")
-        val modelText = extractModelText(raw) ?: throw RuntimeException("AI returned no content.")
-        return parsePlan(modelText, durationSec, maxClipSec)
+        return extractModelText(raw) ?: throw RuntimeException("AI returned no content.")
     }
 
-    private fun executeOpenAiCompatible(
-        baseUrl: String,
-        model: String,
-        prompt: String,
-        apiKey: String,
-        durationSec: Long,
-        maxClipSec: Int
-    ): AiPlan {
+    private fun openAiText(baseUrl: String, model: String, prompt: String, apiKey: String): String {
         val body = JSONObject().apply {
             put("model", model)
             put("temperature", 0.8)
@@ -135,7 +143,7 @@ object AiClipPlanner {
             .build()
 
         val raw = executeWithRetryableErrors(request, "AI provider")
-        val content = try {
+        return try {
             JSONObject(raw)
                 .getJSONArray("choices")
                 .getJSONObject(0)
@@ -144,7 +152,6 @@ object AiClipPlanner {
         } catch (e: Exception) {
             throw RuntimeException("AI returned no content.")
         }
-        return parsePlan(content, durationSec, maxClipSec)
     }
 
     /** Runs the request; maps timeouts and 429/5xx to retryable errors. Returns the body. */
@@ -227,6 +234,39 @@ object AiClipPlanner {
         } catch (e: Exception) {
             rawResponse.take(200)
         }
+    }
+
+    private fun buildMetadataPrompt(
+        sourceTitle: String,
+        clipHint: String,
+        transcript: String?
+    ): String {
+        val transcriptBlock = if (!transcript.isNullOrBlank()) {
+            "Transcript excerpt:\n${transcript.take(3000)}"
+        } else {
+            "(No transcript.)"
+        }
+        return """
+            Write YouTube Shorts upload metadata for a vertical clip. Be catchy and
+            trend-aware, but accurate to the content. Return ONLY JSON:
+            {"title": "string (<=90 chars, strong hook)",
+             "description": "2-3 sentences, then 3-6 relevant hashtags including #Shorts",
+             "tags": ["keyword", "keyword2", "... 6-12 search keywords"]}
+
+            Source video title: $sourceTitle
+            This clip is about: $clipHint
+            $transcriptBlock
+        """.trimIndent()
+    }
+
+    private fun parseMetadata(modelText: String): VideoMetadata {
+        val o = JSONObject(extractJsonObject(modelText))
+        val title = o.optString("title").trim().take(100).ifBlank { "My Short #Shorts" }
+        val description = o.optString("description").trim()
+        val tags = o.optJSONArray("tags")?.let { arr ->
+            (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { t -> t.isNotBlank() } }
+        } ?: emptyList()
+        return VideoMetadata(title, description, tags)
     }
 
     /** Some models wrap JSON in ```json fences or add prose; extract the object. */

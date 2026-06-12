@@ -55,4 +55,56 @@ object Prefs {
 
     fun setModel(context: Context, provider: AiProvider, value: String) =
         sp(context).edit().putString("model_${provider.name}", value).apply()
+
+    // ----- YouTube (OAuth device flow) -----
+
+    private const val K_YT_CLIENT_ID = "yt_client_id"
+    private const val K_YT_CLIENT_SECRET = "yt_client_secret"
+    private const val K_YT_REFRESH = "yt_refresh_token"
+    private const val K_YT_ACCESS = "yt_access_token"
+    private const val K_YT_ACCESS_EXP = "yt_access_expiry"
+    private const val K_YT_CHANNEL = "yt_channel_title"
+    private const val K_YT_PRIVACY = "yt_privacy"
+
+    fun getYtClientId(context: Context) = sp(context).getString(K_YT_CLIENT_ID, "").orEmpty()
+    fun setYtClientId(context: Context, v: String) =
+        sp(context).edit().putString(K_YT_CLIENT_ID, v.trim()).apply()
+
+    fun getYtClientSecret(context: Context) = sp(context).getString(K_YT_CLIENT_SECRET, "").orEmpty()
+    fun setYtClientSecret(context: Context, v: String) =
+        sp(context).edit().putString(K_YT_CLIENT_SECRET, v.trim()).apply()
+
+    fun getYtRefreshToken(context: Context) = sp(context).getString(K_YT_REFRESH, "").orEmpty()
+    fun getYtAccessToken(context: Context) = sp(context).getString(K_YT_ACCESS, "").orEmpty()
+    fun getYtAccessExpiry(context: Context) = sp(context).getLong(K_YT_ACCESS_EXP, 0L)
+    fun getYtChannelTitle(context: Context) = sp(context).getString(K_YT_CHANNEL, "").orEmpty()
+
+    fun getYtPrivacy(context: Context) = sp(context).getString(K_YT_PRIVACY, "private").orEmpty()
+    fun setYtPrivacy(context: Context, v: String) =
+        sp(context).edit().putString(K_YT_PRIVACY, v).apply()
+
+    fun saveYtTokens(
+        context: Context,
+        refreshToken: String?,
+        accessToken: String,
+        accessExpiryEpochMs: Long
+    ) {
+        sp(context).edit().apply {
+            if (!refreshToken.isNullOrBlank()) putString(K_YT_REFRESH, refreshToken)
+            putString(K_YT_ACCESS, accessToken)
+            putLong(K_YT_ACCESS_EXP, accessExpiryEpochMs)
+        }.apply()
+    }
+
+    fun setYtChannelTitle(context: Context, v: String) =
+        sp(context).edit().putString(K_YT_CHANNEL, v).apply()
+
+    fun clearYtTokens(context: Context) {
+        sp(context).edit()
+            .remove(K_YT_REFRESH)
+            .remove(K_YT_ACCESS)
+            .remove(K_YT_ACCESS_EXP)
+            .remove(K_YT_CHANNEL)
+            .apply()
+    }
 }

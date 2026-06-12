@@ -78,9 +78,39 @@ otherwise the one baked in at build time:
 ## Settings
 
 - **Output quality:** `1080p` (1080x1920) or `720p` (720x1280, smaller files).
-- **Gemini API key:** enables AI suggestions (see above).
+- **AI provider + key + model:** enables AI suggestions and metadata (see above).
+- **YouTube account:** connect to upload clips (see next section).
 - The app warns on clips longer than **3 minutes** (YouTube Shorts limit) and does a
   quick **free-space check** before exporting.
+
+## Channel manager: AI metadata + upload to YouTube
+
+After you export clips, a **"Ready to upload"** list appears. For each clip you can:
+
+1. **Generate with AI** — fills a catchy **title, description (with #Shorts + hashtags), and tags**.
+2. Edit anything, then **Upload** — the clip is uploaded to your channel with that metadata.
+
+### One-time YouTube setup (you do this in Google Cloud)
+
+The app uses the **OAuth Device Flow**, so it doesn't depend on the app's signing key —
+it keeps working with CI-built APKs.
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com) → create a project.
+2. **APIs & Services → Library →** enable **YouTube Data API v3**.
+3. **OAuth consent screen:** User type **External**; add **your own Google account** under
+   **Test users** (so you can use it without full app verification).
+4. **Credentials → Create credentials → OAuth client ID → Application type:
+   "TVs and Limited Input devices"**. Copy the **Client ID** and **Client Secret**.
+5. In the app: **Settings → YouTube account →** paste Client ID + Secret → **Connect YouTube**.
+   The app shows a code; open **google.com/device** on any device, enter it, and approve.
+
+### Important upload limits (not the app's fault — Google's policy)
+
+- **Unverified projects upload videos as PRIVATE.** Until you complete Google's API
+  verification/audit, videos are locked to **private** even if you choose public. Default
+  visibility here is **private**; make them public from YouTube Studio, or request an audit.
+- **Quota:** an upload costs ~1,600 of the default 10,000 units/day → about **6 uploads/day**.
+- Uploading other people's videos is infringement — only upload **your own** content.
 
 ## Frontend and backend — both are handled, on-device
 
@@ -139,18 +169,18 @@ To produce a shareable APK instead:
 1. Choose a source:
    - Paste a **YouTube URL** and tap **Fetch Video**, or
    - tap **Choose a video on this device** and pick a local file.
-2. Use the **preview** to scrub to a moment, then add clips either way:
+2. Fastest path — **⚡ Auto-clip with AI** (YouTube links): one tap runs
+   fetch → AI picks segments → export → writes captions, then drops them in the
+   **Ready to upload** list for you to review and upload. (Needs an AI key.)
+3. Or do it step by step:
+   - Use the **preview** to scrub to a moment.
    - **Manually:** tap **+ Add clip**, type **Start** / **End** (e.g. `90`, `1:30`, `0:01:30`)
      or tap **Set start/end from preview** to grab the current playhead position.
-   - **With AI:** tap **✨ Suggest clips with AI** to auto-fill suggested segments
-     (requires a Gemini API key in Settings).
-3. Pick an aspect-ratio mode (default **Fit · no crop**). Choose **Blurred fill** for the
-   Reels-style look that keeps the whole frame.
-3. Pick a **crop mode**:
-   - **Center crop** – fills 9:16 by cropping the sides (best for most videos)
-   - **Fit (bars)** – keeps the whole frame with black bars
-   - **Stretch** – stretches to fill (may distort)
-4. Tap **Export Clips**. Find results in **Gallery → Movies/ShortsClipper**.
+   - **With AI:** tap **✨ Suggest clips with AI** to auto-fill suggested segments.
+   - Pick an aspect-ratio mode (default **Fit · no crop**; **Blurred fill** keeps the whole
+     frame Reels-style), then tap **Export Clips**.
+4. In **Ready to upload**: tap **Generate with AI** for metadata, then **Upload**
+   (connect YouTube in Settings first). Clips are also saved to **Gallery → Movies/ShortsClipper**.
 
 ## Tech / versions
 

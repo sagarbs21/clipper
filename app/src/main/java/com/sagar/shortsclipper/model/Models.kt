@@ -67,3 +67,24 @@ data class AiPlan(
     val contentType: String,
     val suggestions: List<AiSuggestion>
 )
+
+/** AI-generated upload metadata for a clip. */
+data class VideoMetadata(
+    val title: String,
+    val description: String,
+    val tags: List<String>
+)
+
+enum class UploadStatus { IDLE, UPLOADING, DONE, FAILED }
+
+/** A finished clip file that can be given metadata and uploaded to YouTube. */
+data class ExportedClip(
+    val id: Long,
+    val filePath: String,
+    val title: String = "",
+    val description: String = "",
+    val tags: String = "",            // comma-separated for easy editing
+    val status: UploadStatus = UploadStatus.IDLE,
+    val message: String = "",
+    val videoId: String = ""
+)
