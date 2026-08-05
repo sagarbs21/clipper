@@ -12,15 +12,22 @@ data class VideoMeta(
     val resolution: String,
     val isLocal: Boolean = false,
     /** Best-effort WebVTT caption URL (YouTube only), used by the AI planner. */
-    val subtitleVttUrl: String? = null
+    val subtitleVttUrl: String? = null,
+    /** Displayed frame size (rotation applied), or 0 when unknown. Drives blurred fill. */
+    val sourceWidth: Int = 0,
+    val sourceHeight: Int = 0
 )
 
 /** How the source frame is mapped into the 9:16 output. */
-enum class CropMode(val label: String) {
-    FIT("Fit · no crop"),
-    BLUR("Blurred fill"),
-    CENTER("Crop to fill"),
-    STRETCH("Stretch")
+enum class CropMode(val label: String, val hint: String) {
+    FIT("Fit · no crop", "Keeps the whole frame, with plain black bars above and below."),
+    BLUR(
+        "Blurred fill",
+        "Keeps the whole frame sharp and fills only the bars around it with a blurred " +
+            "blow-up of the same frame, like Reels."
+    ),
+    CENTER("Crop to fill", "Fills the screen by cutting off the left and right edges."),
+    STRETCH("Stretch", "Fills the screen by squeezing the frame. Distorts faces.")
 }
 
 /** Output resolution / size preset (always 9:16). */

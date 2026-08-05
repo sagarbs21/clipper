@@ -1,15 +1,15 @@
 package com.sagar.shortsclipper.data
 
 import android.content.Context
+import android.os.Build
 import androidx.annotation.OptIn
 import androidx.media3.common.Effect
 import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.effect.GaussianBlur
+import androidx.media3.effect.GaussianBlurWithFrameOverlaid
 import androidx.media3.effect.Presentation
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
-import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
@@ -18,7 +18,7 @@ import androidx.media3.transformer.Transformer
 import com.sagar.shortsclipper.model.CropMode
 import java.io.File
 
-private const val BLUR_SIGMA = 20f
+private const val BLUR_SIGMA = 25f
 
 /**
  * Trims a segment and reformats it to a vertical 9:16 video (YouTube Shorts) using
@@ -45,6 +45,8 @@ class VideoProcessor(private val context: Context) {
         cropMode: CropMode,
         outWidth: Int,
         outHeight: Int,
+        sourceWidth: Int,
+        sourceHeight: Int,
         outputPath: String,
         callback: Callback
     ) {
@@ -79,64 +81,77 @@ class VideoProcessor(private val context: Context) {
 
         transformer = t
 
-        if (cropMode == CropMode.BLUR) {
-            // Whole frame (fit) on top of a blurred, zoomed copy of itself — like Reels/Shorts.
-            t.start(buildBlurredComposition(mediaItem, outWidth, outHeight), outputPath)
-        } else {
-            val layout = when (cropMode) {
-                CropMode.CENTER -> Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
-                CropMode.STRETCH -> Presentation.LAYOUT_STRETCH_TO_FIT
-                else -> Presentation.LAYOUT_SCALE_TO_FIT // FIT (and fallback): keep whole frame
-            }
-            val presentation = Presentation.createForWidthAndHeight(outWidth, outHeight, layout)
-            val edited = EditedMediaItem.Builder(mediaItem)
-                .setEffects(Effects(emptyList(), listOf<Effect>(presentation)))
-                .build()
-            t.start(edited, outputPath)
+        val videoEffects = when (cropMode) {
+            CropMode.BLUR -> blurredFillEffects(outWidth, outHeight, sourceWidth, sourceHeight)
+                ?: fitEffects(outWidth, outHeight, Presentation.LAYOUT_SCALE_TO_FIT)
+            CropMode.CENTER -> fitEffects(outWidth, outHeight, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP)
+            CropMode.STRETCH -> fitEffects(outWidth, outHeight, Presentation.LAYOUT_STRETCH_TO_FIT)
+            CropMode.FIT -> fitEffects(outWidth, outHeight, Presentation.LAYOUT_SCALE_TO_FIT)
         }
+
+        val edited = EditedMediaItem.Builder(mediaItem)
+            .setEffects(Effects(emptyList(), videoEffects))
+            .build()
+        t.start(edited, outputPath)
     }
 
+    private fun fitEffects(outWidth: Int, outHeight: Int, layout: Int): List<Effect> =
+        listOf(Presentation.createForWidthAndHeight(outWidth, outHeight, layout))
+
     /**
-     * Builds a 2-layer composition: a background that fills the 9:16 frame (cropped) and is
-     * blurred, with the whole, uncropped frame fit on top. The top layer's letterbox area is
-     * transparent so the blurred background shows through.
+     * Reels/Shorts look: the whole source frame stays sharp and centred, and only the
+     * leftover canvas around it is filled with a blurred blow-up of the same frame.
+     *
+     * [GaussianBlurWithFrameOverlaid] does the compositing in one shader pass. It grows
+     * the frame by `1 / scaleSharp` in each direction, stretches a blurred copy over that
+     * larger frame, then draws the untouched frame back on top at its original size. So we
+     * first scale the source down to the box it should occupy inside the canvas, and pick
+     * the scale factors that grow that box back to exactly [outWidth] x [outHeight].
+     *
+     * Returns null when blurred fill can't or shouldn't be used, so the caller falls back
+     * to a plain fit.
      */
-    private fun buildBlurredComposition(
-        mediaItem: MediaItem,
+    private fun blurredFillEffects(
         outWidth: Int,
-        outHeight: Int
-    ): Composition {
-        val background = EditedMediaItem.Builder(mediaItem)
-            .setRemoveAudio(true)
-            .setEffects(
-                Effects(
-                    emptyList(),
-                    listOf(
-                        Presentation.createForWidthAndHeight(
-                            outWidth, outHeight, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
-                        ),
-                        GaussianBlur(BLUR_SIGMA)
-                    )
-                )
-            )
-            .build()
+        outHeight: Int,
+        sourceWidth: Int,
+        sourceHeight: Int
+    ): List<Effect>? {
+        // The blur shader family requires API 26.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return null
+        if (sourceWidth <= 0 || sourceHeight <= 0) return null
 
-        val foreground = EditedMediaItem.Builder(mediaItem)
-            .setEffects(
-                Effects(
-                    emptyList(),
-                    listOf<Effect>(
-                        Presentation.createForWidthAndHeight(
-                            outWidth, outHeight, Presentation.LAYOUT_SCALE_TO_FIT
-                        )
-                    )
-                )
-            )
-            .build()
+        // The letterbox box the untouched frame fills inside the canvas.
+        var sharpWidth = outWidth
+        var sharpHeight = outHeight
+        if (sourceWidth.toLong() * outHeight > outWidth.toLong() * sourceHeight) {
+            sharpHeight = (outWidth.toLong() * sourceHeight / sourceWidth).toInt()
+        } else {
+            sharpWidth = (outHeight.toLong() * sourceWidth / sourceHeight).toInt()
+        }
+        sharpWidth = (sharpWidth / 2) * 2
+        sharpHeight = (sharpHeight / 2) * 2
+        if (sharpWidth <= 0 || sharpHeight <= 0) return null
 
-        val backgroundSequence = EditedMediaItemSequence(background)
-        val foregroundSequence = EditedMediaItemSequence(foreground)
-        return Composition.Builder(backgroundSequence, foregroundSequence).build()
+        // Source is already 9:16, so there is no background left to fill.
+        if (sharpWidth >= outWidth && sharpHeight >= outHeight) return null
+
+        return listOf<Effect>(
+            // Crop rather than fit here: integer rounding above can leave the box a
+            // fraction off the source ratio, and a sub-pixel crop beats a black edge.
+            Presentation.createForWidthAndHeight(
+                sharpWidth, sharpHeight, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
+            ),
+            GaussianBlurWithFrameOverlaid(
+                BLUR_SIGMA,
+                sharpWidth.toFloat() / outWidth,
+                sharpHeight.toFloat() / outHeight
+            ),
+            // Normalise away any rounding so the encoder gets the exact output size.
+            Presentation.createForWidthAndHeight(
+                outWidth, outHeight, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
+            )
+        )
     }
 
     /** Returns 0..100 while running. Call on the main thread. */

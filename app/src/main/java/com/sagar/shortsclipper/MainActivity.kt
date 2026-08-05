@@ -9,6 +9,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -79,7 +81,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ClipperScreen(vm: ClipViewModel) {
     // Keep the screen awake during export (also helps on MIUI/HyperOS power management).
@@ -408,7 +410,7 @@ fun ClipperScreen(vm: ClipViewModel) {
                     }
 
                     Text("Crop mode", fontWeight = FontWeight.SemiBold)
-                    Row(
+                    FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
@@ -417,10 +419,15 @@ fun ClipperScreen(vm: ClipViewModel) {
                                 selected = vm.cropMode == mode,
                                 onClick = { vm.cropMode = mode },
                                 label = { Text(mode.label) },
-                                enabled = !vm.exporting
+                                enabled = !vm.exporting && !vm.autoRunning
                             )
                         }
                     }
+                    Text(
+                        vm.cropMode.hint,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -540,6 +547,17 @@ fun ClipperScreen(vm: ClipViewModel) {
                 // ---------- Exported clips: metadata + upload ----------
                 if (vm.exportedClips.isNotEmpty()) {
                     Text("Ready to upload", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (vm.apiKey.isBlank()) {
+                            "Add an API key in Settings and titles will be written for you " +
+                                "after every export."
+                        } else {
+                            "Titles, descriptions and tags are written by AI after each " +
+                                "export. Edit anything before uploading."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     vm.exportedClips.forEachIndexed { idx, ec ->
                         val busy = ec.status == UploadStatus.UPLOADING
                         OutlinedCard(modifier = Modifier.fillMaxWidth()) {
@@ -585,7 +603,7 @@ fun ClipperScreen(vm: ClipViewModel) {
                                     OutlinedButton(
                                         onClick = { vm.generateMetadataFor(ec.id) },
                                         enabled = !busy && vm.apiKey.isNotBlank()
-                                    ) { Text("Generate with AI") }
+                                    ) { Text("Regenerate title") }
                                     Button(
                                         onClick = { vm.uploadClip(ec.id) },
                                         enabled = vm.ytConnected && !busy

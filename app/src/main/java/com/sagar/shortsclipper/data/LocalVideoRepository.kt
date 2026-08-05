@@ -22,8 +22,7 @@ object LocalVideoRepository {
             mmr.setDataSource(context, uri)
             val durationMs =
                 mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
-            val width = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH) ?: "?"
-            val height = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT) ?: "?"
+            val size = VideoDimensions.read(mmr)
 
             if (durationMs <= 0L) {
                 throw IllegalStateException("This file doesn't look like a readable video.")
@@ -34,8 +33,10 @@ object LocalVideoRepository {
                 uploader = "On this device",
                 durationSec = durationMs / 1000,
                 sourceUri = uri.toString(),
-                resolution = "${width}x${height}",
-                isLocal = true
+                resolution = size?.let { "${it.first}x${it.second}" } ?: "?",
+                isLocal = true,
+                sourceWidth = size?.first ?: 0,
+                sourceHeight = size?.second ?: 0
             )
         } finally {
             try {

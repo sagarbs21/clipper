@@ -16,6 +16,7 @@ import com.sagar.shortsclipper.data.CaptionsRepository
 import com.sagar.shortsclipper.data.LocalVideoRepository
 import com.sagar.shortsclipper.data.MediaStoreSaver
 import com.sagar.shortsclipper.data.Prefs
+import com.sagar.shortsclipper.data.VideoDimensions
 import com.sagar.shortsclipper.data.VideoProcessor
 import com.sagar.shortsclipper.data.YouTubeUploader
 import com.sagar.shortsclipper.data.YoutubeRepository
@@ -26,6 +27,7 @@ import com.sagar.shortsclipper.model.ExportedClip
 import com.sagar.shortsclipper.model.OutputQuality
 import com.sagar.shortsclipper.model.UploadStatus
 import com.sagar.shortsclipper.model.VideoMeta
+import com.sagar.shortsclipper.model.VideoMetadata
 import com.sagar.shortsclipper.util.formatMs
 import com.sagar.shortsclipper.util.parseTimeToMs
 import kotlinx.coroutines.CompletableDeferred
@@ -94,6 +96,9 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
 
     private var nextId = 1L
     private val processor = VideoProcessor(app)
+
+    /** Probed frame size per source URI, so a remote probe only happens once. */
+    private var probedSize: Pair<String, Pair<Int, Int>>? = null
 
     fun updateQuality(q: OutputQuality) {
         quality = q
@@ -258,30 +263,9 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
         }
         val current = exportedClips.firstOrNull { it.id == id } ?: return
         val sourceTitle = meta?.title ?: ""
-        updateExportedClip(id) { it.copy(message = "Generating metadata...") }
+        updateExportedClip(id) { it.copy(message = "Generating title...") }
         viewModelScope.launch {
-            try {
-                val md = withContext(Dispatchers.IO) {
-                    AiClipPlanner.generateMetadata(
-                        provider = provider,
-                        model = model.ifBlank { provider.defaultModel },
-                        apiKey = key,
-                        sourceTitle = sourceTitle,
-                        clipHint = current.title,
-                        transcript = lastTranscript
-                    )
-                }
-                updateExportedClip(id) {
-                    it.copy(
-                        title = md.title,
-                        description = md.description,
-                        tags = md.tags.joinToString(", "),
-                        message = "Metadata generated — review and upload."
-                    )
-                }
-            } catch (e: Exception) {
-                updateExportedClip(id) { it.copy(message = "Metadata failed: ${e.message ?: "error"}") }
-            }
+            applyAiMetadata(id, sourceTitle, current.title)
         }
     }
 
@@ -496,6 +480,7 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
                 }
 
                 val q = quality
+                val (srcW, srcH) = sizeForCropMode(m)
                 val snapshot = clips.toList()
                 var saved = 0
                 snapshot.forEachIndexed { index, clip ->
@@ -513,35 +498,21 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
                         .apply { mkdirs() }
                     val outFile = File(exportsDir, "$safeName-${System.currentTimeMillis()}.mp4")
 
-                    exportOne(m.sourceUri, startMs, endMs, q.width, q.height, outFile)
+                    exportOne(m.sourceUri, startMs, endMs, q.width, q.height, srcW, srcH, outFile)
                     saveCopyToGallery(outFile, safeName)
 
-                    status = "Auto-clip: writing caption ${index + 1} of ${snapshot.size}..."
-                    val md = try {
-                        withContext(Dispatchers.IO) {
-                            AiClipPlanner.generateMetadata(
-                                provider = provider,
-                                model = model.ifBlank { provider.defaultModel },
-                                apiKey = key,
-                                sourceTitle = m.title,
-                                clipHint = clip.name,
-                                transcript = transcript
-                            )
-                        }
-                    } catch (e: Exception) {
-                        null
-                    }
-
+                    val exportedId = nextId++
                     exportedClips.add(
                         ExportedClip(
-                            id = nextId++,
+                            id = exportedId,
                             filePath = outFile.absolutePath,
-                            title = md?.title ?: clip.name,
-                            description = md?.description.orEmpty(),
-                            tags = md?.tags?.joinToString(", ").orEmpty()
+                            title = clip.name
                         )
                     )
                     saved++
+
+                    status = "Auto-clip: writing AI title ${index + 1} of ${snapshot.size}..."
+                    applyAiMetadata(exportedId, m.title, clip.name)
                 }
                 progress = 100
                 status = if (saved > 0) {
@@ -608,6 +579,7 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             var saved = 0
             try {
+                val (srcW, srcH) = sizeForCropMode(m)
                 val snapshot = clips.toList()
                 snapshot.forEachIndexed { index, clip ->
                     val startMs = parseTimeToMs(clip.start) ?: 0L
@@ -622,33 +594,99 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
                     status = "Exporting clip ${index + 1} of ${snapshot.size}..."
                     progress = 0
 
-                    val safeName = (clip.name.ifBlank { "clip_${index + 1}" })
-                        .replace(Regex("[^a-zA-Z0-9_-]"), "_")
+                    val fallbackName = clip.name.ifBlank { "clip_${index + 1}" }
+                    val safeName = fallbackName.replace(Regex("[^a-zA-Z0-9_-]"), "_")
                     val exportsDir = File(getApplication<Application>().filesDir, "exports")
                         .apply { mkdirs() }
                     val outFile = File(exportsDir, "$safeName-${System.currentTimeMillis()}.mp4")
 
-                    exportOne(m.sourceUri, startMs, endMs, q.width, q.height, outFile)
+                    exportOne(m.sourceUri, startMs, endMs, q.width, q.height, srcW, srcH, outFile)
                     saveCopyToGallery(outFile, safeName)
+
+                    val exportedId = nextId++
                     exportedClips.add(
                         ExportedClip(
-                            id = nextId++,
+                            id = exportedId,
                             filePath = outFile.absolutePath,
-                            title = clip.name.ifBlank { "clip_${index + 1}" }
+                            title = fallbackName
                         )
                     )
                     saved++
+
+                    if (apiKey.isNotBlank()) {
+                        status = "Writing AI title for clip ${index + 1} of ${snapshot.size}..."
+                        applyAiMetadata(exportedId, m.title, fallbackName)
+                    }
                 }
                 progress = 100
-                status = if (saved > 0) {
+                status = if (saved == 0) {
+                    "Nothing exported. Check your clip times."
+                } else if (apiKey.isBlank()) {
                     "Done. $saved clip(s) saved to your gallery. Add metadata below and upload."
                 } else {
-                    "Nothing exported. Check your clip times."
+                    "Done. $saved clip(s) saved with AI titles. Review below and upload."
                 }
             } catch (e: Exception) {
                 status = "Export error: ${e.message ?: e.javaClass.simpleName}"
             } finally {
                 exporting = false
+            }
+        }
+    }
+
+    /** Only blurred fill needs the source shape, and probing a remote stream isn't free. */
+    private suspend fun sizeForCropMode(m: VideoMeta): Pair<Int, Int> =
+        if (cropMode == CropMode.BLUR) sourceSize(m) else 0 to 0
+
+    /**
+     * Frame size of the loaded source. Local files report it up front; for a YouTube
+     * stream we probe it once. Returns 0x0 when unknown, which makes blurred fill fall
+     * back to a plain fit rather than guessing the shape wrong.
+     */
+    private suspend fun sourceSize(m: VideoMeta): Pair<Int, Int> {
+        if (m.sourceWidth > 0 && m.sourceHeight > 0) return m.sourceWidth to m.sourceHeight
+        probedSize?.let { (uri, size) -> if (uri == m.sourceUri) return size }
+        val size = withContext(Dispatchers.IO) {
+            VideoDimensions.probe(getApplication<Application>(), m.sourceUri)
+        } ?: return 0 to 0
+        probedSize = m.sourceUri to size
+        return size
+    }
+
+    /** Best-effort AI title/description/tags for one clip. Null when unavailable. */
+    private suspend fun aiMetadata(sourceTitle: String, clipHint: String): VideoMetadata? {
+        val key = apiKey.trim()
+        if (key.isEmpty()) return null
+        return try {
+            withContext(Dispatchers.IO) {
+                AiClipPlanner.generateMetadata(
+                    provider = provider,
+                    model = model.ifBlank { provider.defaultModel },
+                    apiKey = key,
+                    sourceTitle = sourceTitle,
+                    clipHint = clipHint,
+                    transcript = lastTranscript,
+                    contentType = contentType
+                )
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** Fills an exported clip's upload fields from the AI, leaving them editable. */
+    private suspend fun applyAiMetadata(exportedId: Long, sourceTitle: String, clipHint: String) {
+        val md = aiMetadata(sourceTitle, clipHint)
+        updateExportedClip(exportedId) {
+            if (md == null) {
+                it.copy(message = "AI title unavailable — edit the fields or tap Regenerate.")
+            } else {
+                it.copy(
+                    title = md.title,
+                    description = md.description,
+                    tags = md.tags.joinToString(", "),
+                    message = "AI title ready — review and upload."
+                )
             }
         }
     }
@@ -659,6 +697,8 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
         endMs: Long,
         outWidth: Int,
         outHeight: Int,
+        sourceWidth: Int,
+        sourceHeight: Int,
         outFile: File
     ) {
         val done = CompletableDeferred<Unit>()
@@ -672,6 +712,8 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
                 cropMode = cropMode,
                 outWidth = outWidth,
                 outHeight = outHeight,
+                sourceWidth = sourceWidth,
+                sourceHeight = sourceHeight,
                 outputPath = outFile.absolutePath,
                 callback = object : VideoProcessor.Callback {
                     override fun onDone(outputPath: String) {

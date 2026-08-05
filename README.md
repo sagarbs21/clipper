@@ -21,9 +21,13 @@ Choose how the source maps into 9:16 — the default keeps the **whole frame**:
 | Mode | What it does |
 |---|---|
 | **Fit · no crop** (default) | Whole frame, scaled to fit, with bars. Nothing is cut. |
-| **Blurred fill** | Whole frame on top of a blurred, zoomed copy of itself (Reels/Shorts style). Nothing is cut. |
+| **Blurred fill** | Whole frame stays **sharp** in the middle; only the bars around it are filled with a blurred blow-up of the same frame (Reels/Shorts style). Nothing is cut. |
 | **Crop to fill** | Fills the frame by cropping the sides/top. |
 | **Stretch** | Stretches to fill (may distort). |
+
+Blurred fill needs API 26+ and the source frame size. The app reads that from the
+file (local videos) or probes the stream once (YouTube); if neither works it falls
+back to **Fit · no crop** rather than guessing the frame shape.
 
 ## AI clip suggestions (optional)
 
@@ -85,10 +89,12 @@ otherwise the one baked in at build time:
 
 ## Channel manager: AI metadata + upload to YouTube
 
-After you export clips, a **"Ready to upload"** list appears. For each clip you can:
+After you export clips, a **"Ready to upload"** list appears. If an AI key is set,
+each clip's **title, description (with #Shorts + hashtags), and tags** are written
+automatically as soon as it finishes exporting — no extra tap. For each clip you can:
 
-1. **Generate with AI** — fills a catchy **title, description (with #Shorts + hashtags), and tags**.
-2. Edit anything, then **Upload** — the clip is uploaded to your channel with that metadata.
+1. Edit anything, or tap **Regenerate title** for a fresh take.
+2. **Upload** — the clip goes to your channel with that metadata.
 
 ### One-time YouTube setup (you do this in Google Cloud)
 
@@ -170,7 +176,7 @@ To produce a shareable APK instead:
    - Paste a **YouTube URL** and tap **Fetch Video**, or
    - tap **Choose a video on this device** and pick a local file.
 2. Fastest path — **⚡ Auto-clip with AI** (YouTube links): one tap runs
-   fetch → AI picks segments → export → writes captions, then drops them in the
+   fetch → AI picks segments → export → writes titles, then drops them in the
    **Ready to upload** list for you to review and upload. (Needs an AI key.)
 3. Or do it step by step:
    - Use the **preview** to scrub to a moment.
@@ -179,8 +185,9 @@ To produce a shareable APK instead:
    - **With AI:** tap **✨ Suggest clips with AI** to auto-fill suggested segments.
    - Pick an aspect-ratio mode (default **Fit · no crop**; **Blurred fill** keeps the whole
      frame Reels-style), then tap **Export Clips**.
-4. In **Ready to upload**: tap **Generate with AI** for metadata, then **Upload**
-   (connect YouTube in Settings first). Clips are also saved to **Gallery → Movies/ShortsClipper**.
+4. In **Ready to upload**: the AI title, description and tags are already filled in.
+   Edit if you like, then **Upload** (connect YouTube in Settings first).
+   Clips are also saved to **Gallery → Movies/ShortsClipper**.
 
 ## Tech / versions
 

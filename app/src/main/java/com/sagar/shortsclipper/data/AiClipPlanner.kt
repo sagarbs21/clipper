@@ -61,11 +61,12 @@ object AiClipPlanner {
         apiKey: String,
         sourceTitle: String,
         clipHint: String,
-        transcript: String?
+        transcript: String?,
+        contentType: String? = null
     ): VideoMetadata {
-        val prompt = buildMetadataPrompt(sourceTitle, clipHint, transcript)
+        val prompt = buildMetadataPrompt(sourceTitle, clipHint, transcript, contentType)
         val text = completeWithRetry(provider, model, prompt, apiKey)
-        return parseMetadata(text)
+        return parseMetadata(text, clipHint)
     }
 
     /** Runs one completion against the chosen provider, retrying transient errors. */
@@ -239,29 +240,48 @@ object AiClipPlanner {
     private fun buildMetadataPrompt(
         sourceTitle: String,
         clipHint: String,
-        transcript: String?
+        transcript: String?,
+        contentType: String?
     ): String {
         val transcriptBlock = if (!transcript.isNullOrBlank()) {
             "Transcript excerpt:\n${transcript.take(3000)}"
         } else {
             "(No transcript.)"
         }
+        val typeBlock = if (!contentType.isNullOrBlank()) {
+            "Content type: $contentType"
+        } else {
+            "(Content type unknown.)"
+        }
         return """
-            Write YouTube Shorts upload metadata for a vertical clip. Be catchy and
-            trend-aware, but accurate to the content. Return ONLY JSON:
-            {"title": "string (<=90 chars, strong hook)",
+            Write YouTube Shorts upload metadata for a vertical clip. Return ONLY JSON:
+            {"title": "string",
              "description": "2-3 sentences, then 3-6 relevant hashtags including #Shorts",
              "tags": ["keyword", "keyword2", "... 6-12 search keywords"]}
 
+            Title rules:
+            - 40-70 characters, never more than 90. It must read as a finished title.
+            - Lead with the hook: the surprise, the number, the claim, or the question.
+            - Plain spoken language. No filler like "In this video" and no ALL CAPS words.
+            - Accurate to what actually happens in the clip. Never promise more than it shows.
+            - At most one emoji, only if it genuinely fits.
+            - End with " #Shorts" if that keeps it under 90 characters.
+            - For movies and tv_series, avoid spoilers. For music, name the hook or lyric.
+              For sports and gaming, lead with the peak moment. For tutorials, lead with the
+              outcome the viewer gets.
+
+            $typeBlock
             Source video title: $sourceTitle
             This clip is about: $clipHint
             $transcriptBlock
         """.trimIndent()
     }
 
-    private fun parseMetadata(modelText: String): VideoMetadata {
+    private fun parseMetadata(modelText: String, fallbackTitle: String): VideoMetadata {
         val o = JSONObject(extractJsonObject(modelText))
-        val title = o.optString("title").trim().take(100).ifBlank { "My Short #Shorts" }
+        val title = o.optString("title").trim().take(100)
+            .ifBlank { fallbackTitle.trim().take(100) }
+            .ifBlank { "My Short #Shorts" }
         val description = o.optString("description").trim()
         val tags = o.optJSONArray("tags")?.let { arr ->
             (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { t -> t.isNotBlank() } }
