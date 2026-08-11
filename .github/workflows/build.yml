@@ -26,15 +26,38 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      # Runners are ephemeral, so without this each build generates a new random
-      # debug keystore. A different signature forces an uninstall before the APK
-      # can be installed, which wipes the saved API key and YouTube tokens.
-      # Reusing one cached key means new builds install as plain updates.
-      - name: Reuse the debug signing key across builds
+      # Runners are ephemeral, so left alone every build gets a new random debug key.
+      # A changed signature can't install over the previous APK, and the uninstall
+      # that forces takes the saved API key and YouTube tokens with it. Creating the
+      # key ourselves and caching it keeps one signature across builds, so new APKs
+      # install as plain updates. These are the credentials AGP expects by default,
+      # so it picks the file up without any signingConfig in the build script.
+      - name: Restore the debug signing key
+        id: debug-keystore
         uses: actions/cache@v4
         with:
           path: ~/.android/debug.keystore
           key: android-debug-keystore-v1
+
+      - name: Create the debug signing key if none was cached
+        if: steps.debug-keystore.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.android
+          keytool -genkeypair -v \
+            -keystore ~/.android/debug.keystore \
+            -storetype PKCS12 \
+            -storepass android -keypass android \
+            -alias androiddebugkey \
+            -dname "CN=Android Debug,O=Android,C=US" \
+            -keyalg RSA -keysize 2048 -validity 10000
+
+      # Printing the fingerprint makes it obvious in the log whether a build reused
+      # the cached key or minted a new one that will require an uninstall.
+      - name: Show the signing fingerprint
+        run: |
+          ls -l ~/.android/debug.keystore
+          keytool -list -v -keystore ~/.android/debug.keystore \
+            -storepass android -alias androiddebugkey | grep -i "SHA256:"
 
       # The ubuntu-latest runner ships with the Android SDK (ANDROID_HOME set),
       # including API 34, so AGP can build without extra setup.
