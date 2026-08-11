@@ -14,6 +14,7 @@ import androidx.lifecycle.viewModelScope
 import com.sagar.shortsclipper.data.AiClipPlanner
 import com.sagar.shortsclipper.data.CaptionsRepository
 import com.sagar.shortsclipper.data.ContentAnalyzer
+import com.sagar.shortsclipper.data.ModelCatalog
 import com.sagar.shortsclipper.data.LocalVideoRepository
 import com.sagar.shortsclipper.data.MediaStoreSaver
 import com.sagar.shortsclipper.data.Prefs
@@ -25,6 +26,7 @@ import com.sagar.shortsclipper.model.AiProvider
 import com.sagar.shortsclipper.model.ClipCandidate
 import com.sagar.shortsclipper.model.ClipSpec
 import com.sagar.shortsclipper.model.CropMode
+import com.sagar.shortsclipper.model.ModelOption
 import com.sagar.shortsclipper.model.ExportedClip
 import com.sagar.shortsclipper.model.OutputQuality
 import com.sagar.shortsclipper.model.UploadStatus
@@ -63,7 +65,19 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var apiKey by mutableStateOf(Prefs.getApiKey(app, initialProvider))
         private set
+    /** Pinned model id. Blank while [autoModel] is on. */
     var model by mutableStateOf(Prefs.getModel(app, initialProvider))
+        private set
+    var autoModel by mutableStateOf(Prefs.isAutoModel(app, initialProvider))
+        private set
+    /** What auto-pick last landed on, shown so the choice isn't invisible. */
+    var resolvedModel by mutableStateOf(Prefs.getResolvedModel(app, initialProvider))
+        private set
+    var models by mutableStateOf<List<ModelOption>>(emptyList())
+        private set
+    var modelsLoading by mutableStateOf(false)
+        private set
+    var modelsError by mutableStateOf<String?>(null)
         private set
 
     // AI state
@@ -112,10 +126,16 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun updateProvider(p: AiProvider) {
+        val ctx = getApplication<Application>()
         provider = p
-        apiKey = Prefs.getApiKey(getApplication<Application>(), p)
-        model = Prefs.getModel(getApplication<Application>(), p)
-        Prefs.setProvider(getApplication<Application>(), p)
+        apiKey = Prefs.getApiKey(ctx, p)
+        model = Prefs.getModel(ctx, p)
+        autoModel = Prefs.isAutoModel(ctx, p)
+        resolvedModel = Prefs.getResolvedModel(ctx, p)
+        models = emptyList()
+        modelsError = null
+        Prefs.setProvider(ctx, p)
+        if (apiKey.isNotBlank()) refreshModels()
     }
 
     fun updateApiKey(key: String) {
@@ -126,6 +146,44 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
     fun updateModel(m: String) {
         model = m
         Prefs.setModel(getApplication<Application>(), provider, m)
+    }
+
+    fun setAutoModel(enabled: Boolean) {
+        autoModel = enabled
+        Prefs.setAutoModel(getApplication<Application>(), provider, enabled)
+        if (enabled && apiKey.isNotBlank()) refreshModels()
+    }
+
+    /** Re-reads what the provider serves and, when on auto, re-picks from that. */
+    fun refreshModels() {
+        if (modelsLoading) return
+        val key = apiKey
+        if (key.isBlank()) {
+            modelsError = "Enter an API key first."
+            return
+        }
+        val p = provider
+        modelsLoading = true
+        modelsError = null
+        viewModelScope.launch {
+            try {
+                val found = withContext(Dispatchers.IO) { ModelCatalog.fetch(p, key) }
+                if (p != provider) return@launch
+                models = found.sortedWith(compareByDescending<ModelOption> { it.free }.thenBy { it.id })
+                if (found.isEmpty()) {
+                    modelsError = "${p.label} returned no usable models."
+                } else if (autoModel) {
+                    ModelCatalog.pickBest(found)?.let { best ->
+                        resolvedModel = best.id
+                        Prefs.setResolvedModel(getApplication<Application>(), p, best.id)
+                    }
+                }
+            } catch (e: Exception) {
+                if (p == provider) modelsError = e.message ?: "Could not list models."
+            } finally {
+                if (p == provider) modelsLoading = false
+            }
+        }
     }
 
     // ----- YouTube connection (OAuth device flow) -----
@@ -391,17 +449,19 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 lastTranscript = transcript
                 status = "Asking the AI to pick the best moments..."
-                val plan = withContext(Dispatchers.IO) {
-                    AiClipPlanner.plan(
-                        provider = provider,
-                        model = model.ifBlank { provider.defaultModel },
-                        meta = m,
-                        transcript = transcript,
-                        candidates = candidates,
-                        apiKey = key,
-                        maxClips = AI_MAX_CLIPS,
-                        maxClipSec = AI_MAX_CLIP_SEC
-                    )
+                val plan = withResolvedModel { chosen ->
+                    withContext(Dispatchers.IO) {
+                        AiClipPlanner.plan(
+                            provider = provider,
+                            model = chosen,
+                            meta = m,
+                            transcript = transcript,
+                            candidates = candidates,
+                            apiKey = key,
+                            maxClips = AI_MAX_CLIPS,
+                            maxClipSec = AI_MAX_CLIP_SEC
+                        )
+                    }
                 }
                 contentType = plan.contentType
                 if (plan.suggestions.isEmpty()) {
@@ -463,17 +523,19 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 lastTranscript = transcript
                 status = "Auto-clip: picking the best moments..."
-                val plan = withContext(Dispatchers.IO) {
-                    AiClipPlanner.plan(
-                        provider = provider,
-                        model = model.ifBlank { provider.defaultModel },
-                        meta = m,
-                        transcript = transcript,
-                        candidates = candidates,
-                        apiKey = key,
-                        maxClips = AI_MAX_CLIPS,
-                        maxClipSec = AI_MAX_CLIP_SEC
-                    )
+                val plan = withResolvedModel { chosen ->
+                    withContext(Dispatchers.IO) {
+                        AiClipPlanner.plan(
+                            provider = provider,
+                            model = chosen,
+                            meta = m,
+                            transcript = transcript,
+                            candidates = candidates,
+                            apiKey = key,
+                            maxClips = AI_MAX_CLIPS,
+                            maxClipSec = AI_MAX_CLIP_SEC
+                        )
+                    }
                 }
                 contentType = plan.contentType
                 clips.clear()
@@ -704,21 +766,77 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
         return size
     }
 
+    /**
+     * The model id to actually send. On auto this is the cached pick, re-checked daily so
+     * a retirement upstream doesn't sit waiting to break. Falls back to the last known
+     * good id, then to the provider's built-in default, if the list can't be reached.
+     */
+    private suspend fun resolveModel(force: Boolean = false): String {
+        if (!autoModel && model.isNotBlank()) return model
+
+        val ctx = getApplication<Application>()
+        val cached = Prefs.getResolvedModel(ctx, provider)
+        if (!force && cached.isNotBlank() &&
+            Prefs.getResolvedModelAge(ctx, provider) < MODEL_CACHE_MS
+        ) {
+            return cached
+        }
+
+        val p = provider
+        val key = apiKey.trim()
+        val picked = if (key.isEmpty()) null else try {
+            withContext(Dispatchers.IO) { ModelCatalog.pickBest(ModelCatalog.fetch(p, key))?.id }
+        } catch (e: Exception) {
+            null
+        }
+        if (picked == null) return cached.ifBlank { p.fallbackModel }
+
+        if (p == provider) {
+            resolvedModel = picked
+            Prefs.setResolvedModel(ctx, p, picked)
+        }
+        return picked
+    }
+
+    /**
+     * Runs an AI call and, if the provider says the model is gone, re-picks from the live
+     * list and tries once more. This is the failure that used to be a dead end: a model
+     * retired upstream and every AI action returned an error until the id was edited by
+     * hand.
+     */
+    private suspend fun <T> withResolvedModel(block: suspend (String) -> T): T {
+        val first = resolveModel()
+        return try {
+            block(first)
+        } catch (e: AiClipPlanner.ModelUnavailableException) {
+            if (!autoModel) {
+                autoModel = true
+                Prefs.setAutoModel(getApplication<Application>(), provider, true)
+            }
+            val replacement = resolveModel(force = true)
+            if (replacement == first) throw e
+            status = "$first is no longer available. Switched to $replacement."
+            block(replacement)
+        }
+    }
+
     /** Best-effort AI title/description/tags for one clip. Null when unavailable. */
     private suspend fun aiMetadata(sourceTitle: String, clipHint: String): VideoMetadata? {
         val key = apiKey.trim()
         if (key.isEmpty()) return null
         return try {
-            withContext(Dispatchers.IO) {
-                AiClipPlanner.generateMetadata(
-                    provider = provider,
-                    model = model.ifBlank { provider.defaultModel },
-                    apiKey = key,
-                    sourceTitle = sourceTitle,
-                    clipHint = clipHint,
-                    transcript = lastTranscript,
-                    contentType = contentType
-                )
+            withResolvedModel { chosen ->
+                withContext(Dispatchers.IO) {
+                    AiClipPlanner.generateMetadata(
+                        provider = provider,
+                        model = chosen,
+                        apiKey = key,
+                        sourceTitle = sourceTitle,
+                        clipHint = clipHint,
+                        transcript = lastTranscript,
+                        contentType = contentType
+                    )
+                }
             }
         } catch (e: Exception) {
             null
@@ -821,5 +939,7 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
         // Hand the model more candidates than it needs so it has room to choose.
         private const val AI_CANDIDATES = 12
         private const val AI_CANDIDATE_SEC = 30
+        // Re-check the auto-picked model once a day; retirements get months of notice.
+        private const val MODEL_CACHE_MS = 24L * 60 * 60 * 1000
     }
 }

@@ -41,6 +41,9 @@ object AiClipPlanner {
     /** Thrown for transient failures (overload/timeout) that are worth retrying. */
     private class RetryableException(message: String) : Exception(message)
 
+    /** Thrown when the provider no longer serves the requested model. */
+    class ModelUnavailableException(message: String) : Exception(message)
+
     /** Blocking network call. Run on a background dispatcher. Retries transient errors. */
     fun plan(
         provider: AiProvider,
@@ -171,10 +174,27 @@ object AiClipPlanner {
                 if (it.code == 429 || it.code in 500..599) {
                     throw RetryableException("$label busy (HTTP ${it.code})")
                 }
-                throw RuntimeException("$label error ${it.code}: ${extractApiError(raw)}")
+                val detail = extractApiError(raw)
+                if (isModelProblem(it.code, detail)) throw ModelUnavailableException(detail)
+                throw RuntimeException("$label error ${it.code}: $detail")
             }
             return raw
         }
+    }
+
+    /**
+     * A retired or misspelled model comes back as a plain 400/404, indistinguishable from
+     * a bad request unless the text is read. Telling them apart lets the app re-pick from
+     * the live list instead of just reporting a failure the user can't act on.
+     */
+    private fun isModelProblem(code: Int, detail: String): Boolean {
+        if (code != 400 && code != 403 && code != 404) return false
+        val d = detail.lowercase(Locale.US)
+        if (!d.contains("model")) return false
+        return listOf(
+            "not found", "does not exist", "decommission", "deprecat",
+            "no longer", "unsupported", "invalid", "unknown", "not supported"
+        ).any { d.contains(it) }
     }
 
     private fun buildPrompt(

@@ -27,8 +27,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenu
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -42,7 +46,10 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -274,14 +281,97 @@ fun ClipperScreen(vm: ClipViewModel) {
                             enabled = !vm.suggesting && !vm.exporting,
                             modifier = Modifier.fillMaxWidth()
                         )
-                        OutlinedTextField(
-                            value = vm.model,
-                            onValueChange = { vm.updateModel(it) },
-                            label = { Text("Model") },
-                            singleLine = true,
-                            enabled = !vm.suggesting && !vm.exporting,
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                "Model",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(
+                                onClick = { vm.refreshModels() },
+                                enabled = !vm.modelsLoading && vm.apiKey.isNotBlank()
+                            ) {
+                                Text(if (vm.modelsLoading) "Checking..." else "Refresh list")
+                            }
+                        }
+
+                        FilterChip(
+                            selected = vm.autoModel,
+                            onClick = { vm.setAutoModel(!vm.autoModel) },
+                            label = { Text("Auto · best free model") },
+                            enabled = !vm.suggesting && !vm.exporting
                         )
+
+                        if (vm.autoModel) {
+                            Text(
+                                if (vm.resolvedModel.isBlank()) {
+                                    "The app will ask ${vm.provider.label} what it serves and " +
+                                        "pick the best free model the first time you use AI."
+                                } else {
+                                    "Using ${vm.resolvedModel}, chosen from what " +
+                                        "${vm.provider.label} serves today."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            var modelMenuOpen by remember { mutableStateOf(false) }
+                            ExposedDropdownMenuBox(
+                                expanded = modelMenuOpen,
+                                onExpandedChange = { modelMenuOpen = !modelMenuOpen }
+                            ) {
+                                OutlinedTextField(
+                                    value = vm.model,
+                                    onValueChange = { vm.updateModel(it) },
+                                    label = { Text("Model id") },
+                                    singleLine = true,
+                                    enabled = !vm.suggesting && !vm.exporting,
+                                    trailingIcon = {
+                                        ExposedDropdownMenuDefaults.TrailingIcon(modelMenuOpen)
+                                    },
+                                    modifier = Modifier
+                                        .menuAnchor()
+                                        .fillMaxWidth()
+                                )
+                                ExposedDropdownMenu(
+                                    expanded = modelMenuOpen,
+                                    onDismissRequest = { modelMenuOpen = false }
+                                ) {
+                                    if (vm.models.isEmpty()) {
+                                        DropdownMenuItem(
+                                            text = { Text("Tap \"Refresh list\" to load models") },
+                                            onClick = { modelMenuOpen = false }
+                                        )
+                                    }
+                                    vm.models.forEach { option ->
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    if (option.free) "${option.id}  · free"
+                                                    else option.id
+                                                )
+                                            },
+                                            onClick = {
+                                                vm.updateModel(option.id)
+                                                modelMenuOpen = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        vm.modelsError?.let {
+                            Text(
+                                it,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
                         Text(
                             "Free key: ${vm.provider.keyUrl}. Tip: Groq's free tier is fast and rarely overloaded. Used only for AI; manual clipping stays on-device.",
                             style = MaterialTheme.typography.bodySmall,

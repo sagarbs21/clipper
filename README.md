@@ -38,7 +38,7 @@ vertical Shorts with titles and hashtags. Suggestions auto-fill the clip list �
 
 - **Choose your AI provider** in Settings — Gemini, **Groq (free, fast, rarely overloaded)**,
   OpenRouter, or OpenAI. If Gemini returns 503 (overloaded), switch to **Groq**.
-  Each provider keeps its own key + model (editable). Get a free key:
+  Each provider keeps its own key. Get a free key:
   - Gemini → [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
   - Groq → [console.groq.com/keys](https://console.groq.com/keys)
   - OpenRouter → [openrouter.ai/keys](https://openrouter.ai/keys)
@@ -72,6 +72,22 @@ otherwise the one baked in at build time:
 > GitHub secrets keep it out of git. Note that any key baked into an APK can be extracted
 > from that APK, so don't share the built APK publicly, and consider restricting the key in
 > Google AI Studio. The in-app option keeps the key only on your device.
+### Picking a model
+
+Leave **Auto · best free model** on and the app asks the provider what it currently
+serves, filters that to free text models it can actually call, and picks the strongest
+one. It caches that choice for a day, and if a provider ever answers "no such model" it
+re-picks from the live list and retries the same request.
+
+This matters more than it sounds. Providers retire models on a few months' notice, so a
+hardcoded id turns into a dead app: Groq shut down `llama-3.3-70b-versatile` on
+2026-08-16, and OpenRouter had already dropped every free Llama 3.3 variant. Ranking is
+deliberately name-agnostic — generation number, then parameter count, then context window
+— so it doesn't need editing every time a lineup changes.
+
+Turn the toggle off to pin a specific model; the dropdown lists what the provider is
+serving right now, with the free ones first.
+
 ### How a clip actually gets chosen
 
 The model never picks timestamps out of thin air. Two passes feed it first:

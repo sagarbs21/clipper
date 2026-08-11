@@ -59,14 +59,37 @@ object Prefs {
     fun setApiKey(context: Context, provider: AiProvider, value: String) =
         write(context) { putString("api_${provider.name}", value) }
 
-    /** Per-provider model; defaults to the provider's default when unset. */
-    fun getModel(context: Context, provider: AiProvider): String {
-        val saved = sp(context).getString("model_${provider.name}", "").orEmpty()
-        return if (saved.isNotBlank()) saved else provider.defaultModel
-    }
+    /** Per-provider pinned model. Blank means "let the app pick". */
+    fun getModel(context: Context, provider: AiProvider): String =
+        sp(context).getString("model_${provider.name}", "").orEmpty()
 
     fun setModel(context: Context, provider: AiProvider, value: String) =
         write(context) { putString("model_${provider.name}", value) }
+
+    /** Whether to auto-pick the best free model rather than use the pinned one. */
+    fun isAutoModel(context: Context, provider: AiProvider): Boolean =
+        sp(context).getBoolean("auto_model_${provider.name}", true)
+
+    fun setAutoModel(context: Context, provider: AiProvider, value: Boolean) =
+        write(context) { putBoolean("auto_model_${provider.name}", value) }
+
+    /**
+     * Last model the app auto-picked, cached so every AI call doesn't re-list models.
+     * Stored with the time it was chosen so it can be re-checked periodically.
+     */
+    fun getResolvedModel(context: Context, provider: AiProvider): String =
+        sp(context).getString("resolved_${provider.name}", "").orEmpty()
+
+    fun getResolvedModelAge(context: Context, provider: AiProvider): Long {
+        val at = sp(context).getLong("resolved_at_${provider.name}", 0L)
+        return if (at <= 0L) Long.MAX_VALUE else System.currentTimeMillis() - at
+    }
+
+    fun setResolvedModel(context: Context, provider: AiProvider, value: String) =
+        write(context) {
+            putString("resolved_${provider.name}", value)
+            putLong("resolved_at_${provider.name}", System.currentTimeMillis())
+        }
 
     // ----- YouTube (OAuth device flow) -----
 

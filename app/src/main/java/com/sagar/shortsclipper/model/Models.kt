@@ -61,14 +61,26 @@ enum class OutputQuality(
 enum class AiProvider(
     val label: String,
     val baseUrl: String,      // empty for Gemini (uses its own REST endpoint)
-    val defaultModel: String,
+    /**
+     * Used only when the live model list can't be fetched. The app normally asks the
+     * provider what it serves today, because pinned ids go stale within months.
+     */
+    val fallbackModel: String,
     val keyUrl: String
 ) {
-    GEMINI("Gemini", "", "gemini-2.5-flash", "aistudio.google.com/apikey"),
-    GROQ("Groq (free)", "https://api.groq.com/openai/v1", "llama-3.3-70b-versatile", "console.groq.com/keys"),
-    OPENROUTER("OpenRouter", "https://openrouter.ai/api/v1", "meta-llama/llama-3.3-70b-instruct:free", "openrouter.ai/keys"),
+    GEMINI("Gemini", "", "gemini-3-flash-preview", "aistudio.google.com/apikey"),
+    GROQ("Groq (free)", "https://api.groq.com/openai/v1", "openai/gpt-oss-120b", "console.groq.com/keys"),
+    // OpenRouter's own router across whatever is free right now, so it can't go stale.
+    OPENROUTER("OpenRouter", "https://openrouter.ai/api/v1", "openrouter/free", "openrouter.ai/keys"),
     OPENAI("OpenAI", "https://api.openai.com/v1", "gpt-4o-mini", "platform.openai.com/api-keys")
 }
+
+/** One model a provider is currently serving. */
+data class ModelOption(
+    val id: String,
+    val free: Boolean,
+    val contextTokens: Int
+)
 
 /** A single user-defined clip. Times are free text (seconds, mm:ss, or h:mm:ss). */
 data class ClipSpec(
