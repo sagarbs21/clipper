@@ -300,7 +300,7 @@ fun ClipperScreen(vm: ClipViewModel) {
 
                         FilterChip(
                             selected = vm.autoModel,
-                            onClick = { vm.setAutoModel(!vm.autoModel) },
+                            onClick = { vm.updateAutoModel(!vm.autoModel) },
                             label = { Text("Auto · best free model") },
                             enabled = !vm.suggesting && !vm.exporting
                         )

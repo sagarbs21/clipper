@@ -148,7 +148,7 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
         Prefs.setModel(getApplication<Application>(), provider, m)
     }
 
-    fun setAutoModel(enabled: Boolean) {
+    fun updateAutoModel(enabled: Boolean) {
         autoModel = enabled
         Prefs.setAutoModel(getApplication<Application>(), provider, enabled)
         if (enabled && apiKey.isNotBlank()) refreshModels()
