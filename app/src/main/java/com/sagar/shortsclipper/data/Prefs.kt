@@ -1,6 +1,7 @@
 package com.sagar.shortsclipper.data
 
 import android.content.Context
+import android.content.SharedPreferences
 import com.sagar.shortsclipper.BuildConfig
 import com.sagar.shortsclipper.model.AiProvider
 import com.sagar.shortsclipper.model.OutputQuality
@@ -14,6 +15,17 @@ object Prefs {
     private fun sp(context: Context) =
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
+    /**
+     * Writes synchronously. These values are tiny, and an async apply() can be lost
+     * when an aggressive OEM launcher kills the process straight from the recents
+     * list — which is how saved keys go missing between sessions.
+     */
+    private fun write(context: Context, block: SharedPreferences.Editor.() -> Unit) {
+        val editor = sp(context).edit()
+        editor.block()
+        editor.commit()
+    }
+
     // ----- Output quality -----
 
     fun getQuality(context: Context): OutputQuality {
@@ -22,7 +34,7 @@ object Prefs {
     }
 
     fun setQuality(context: Context, quality: OutputQuality) =
-        sp(context).edit().putString(K_QUALITY, quality.name).apply()
+        write(context) { putString(K_QUALITY, quality.name) }
 
     // ----- AI provider -----
 
@@ -32,7 +44,7 @@ object Prefs {
     }
 
     fun setProvider(context: Context, provider: AiProvider) =
-        sp(context).edit().putString(K_PROVIDER, provider.name).apply()
+        write(context) { putString(K_PROVIDER, provider.name) }
 
     /**
      * Per-provider key. For Gemini, falls back to the key baked in at build time
@@ -45,7 +57,7 @@ object Prefs {
     }
 
     fun setApiKey(context: Context, provider: AiProvider, value: String) =
-        sp(context).edit().putString("api_${provider.name}", value).apply()
+        write(context) { putString("api_${provider.name}", value) }
 
     /** Per-provider model; defaults to the provider's default when unset. */
     fun getModel(context: Context, provider: AiProvider): String {
@@ -54,7 +66,7 @@ object Prefs {
     }
 
     fun setModel(context: Context, provider: AiProvider, value: String) =
-        sp(context).edit().putString("model_${provider.name}", value).apply()
+        write(context) { putString("model_${provider.name}", value) }
 
     // ----- YouTube (OAuth device flow) -----
 
@@ -68,11 +80,11 @@ object Prefs {
 
     fun getYtClientId(context: Context) = sp(context).getString(K_YT_CLIENT_ID, "").orEmpty()
     fun setYtClientId(context: Context, v: String) =
-        sp(context).edit().putString(K_YT_CLIENT_ID, v.trim()).apply()
+        write(context) { putString(K_YT_CLIENT_ID, v.trim()) }
 
     fun getYtClientSecret(context: Context) = sp(context).getString(K_YT_CLIENT_SECRET, "").orEmpty()
     fun setYtClientSecret(context: Context, v: String) =
-        sp(context).edit().putString(K_YT_CLIENT_SECRET, v.trim()).apply()
+        write(context) { putString(K_YT_CLIENT_SECRET, v.trim()) }
 
     fun getYtRefreshToken(context: Context) = sp(context).getString(K_YT_REFRESH, "").orEmpty()
     fun getYtAccessToken(context: Context) = sp(context).getString(K_YT_ACCESS, "").orEmpty()
@@ -81,7 +93,7 @@ object Prefs {
 
     fun getYtPrivacy(context: Context) = sp(context).getString(K_YT_PRIVACY, "private").orEmpty()
     fun setYtPrivacy(context: Context, v: String) =
-        sp(context).edit().putString(K_YT_PRIVACY, v).apply()
+        write(context) { putString(K_YT_PRIVACY, v) }
 
     fun saveYtTokens(
         context: Context,
@@ -89,22 +101,22 @@ object Prefs {
         accessToken: String,
         accessExpiryEpochMs: Long
     ) {
-        sp(context).edit().apply {
+        write(context) {
             if (!refreshToken.isNullOrBlank()) putString(K_YT_REFRESH, refreshToken)
             putString(K_YT_ACCESS, accessToken)
             putLong(K_YT_ACCESS_EXP, accessExpiryEpochMs)
-        }.apply()
+        }
     }
 
     fun setYtChannelTitle(context: Context, v: String) =
-        sp(context).edit().putString(K_YT_CHANNEL, v).apply()
+        write(context) { putString(K_YT_CHANNEL, v) }
 
     fun clearYtTokens(context: Context) {
-        sp(context).edit()
-            .remove(K_YT_REFRESH)
-            .remove(K_YT_ACCESS)
-            .remove(K_YT_ACCESS_EXP)
-            .remove(K_YT_CHANNEL)
-            .apply()
+        write(context) {
+            remove(K_YT_REFRESH)
+            remove(K_YT_ACCESS)
+            remove(K_YT_ACCESS_EXP)
+            remove(K_YT_CHANNEL)
+        }
     }
 }

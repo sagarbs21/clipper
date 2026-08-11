@@ -96,7 +96,7 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.3.1")
 
     // NewPipeExtractor: resolve YouTube stream URLs without an API key (JitPack)
-    implementation("com.github.teamnewpipe:NewPipeExtractor:v0.26.2")
+    implementation("com.github.teamnewpipe:NewPipeExtractor:v0.26.4")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")

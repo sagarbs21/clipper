@@ -34,21 +34,52 @@ object YoutubeRepository {
         val service = ServiceList.YouTube
         val info = StreamInfo.getInfo(service, url)
 
-        val best = info.videoStreams
+        // Muxed streams carry audio and video in one URL, but YouTube has retired
+        // everything above 360p, so we only fall back to them.
+        val muxed = info.videoStreams
             .filter { it.isUrl && !it.content.isNullOrEmpty() }
             .maxByOrNull { resolutionValue(it.getResolution()) }
-            ?: throw IllegalStateException(
-                "No playable muxed stream was found for this video."
+
+        val videoOnly = info.videoOnlyStreams
+            .filter { it.isUrl && !it.content.isNullOrEmpty() }
+            .maxByOrNull { resolutionValue(it.getResolution()) }
+
+        val audioOnly = info.audioStreams
+            .filter { it.isUrl && !it.content.isNullOrEmpty() }
+            .maxByOrNull { it.averageBitrate }
+
+        val useAdaptive = videoOnly != null && audioOnly != null &&
+            resolutionValue(videoOnly.getResolution()) >= resolutionValue(muxed?.getResolution())
+
+        val videoUri: String
+        val audioUri: String?
+        val resolution: String
+        when {
+            useAdaptive -> {
+                videoUri = videoOnly!!.content
+                audioUri = audioOnly!!.content
+                resolution = videoOnly.getResolution() ?: "?"
+            }
+            muxed != null -> {
+                videoUri = muxed.content
+                audioUri = null
+                resolution = muxed.getResolution() ?: "?"
+            }
+            else -> throw IllegalStateException(
+                "YouTube returned no playable stream for this video. It may be " +
+                    "age-restricted, private, or region-locked."
             )
+        }
 
         return VideoMeta(
             title = info.name ?: "Untitled",
             uploader = info.uploaderName ?: "Unknown",
             durationSec = info.duration,
-            sourceUri = best.content,
-            resolution = best.getResolution() ?: "?",
+            sourceUri = videoUri,
+            resolution = resolution,
             isLocal = false,
-            subtitleVttUrl = pickVttSubtitleUrl(info)
+            subtitleVttUrl = pickVttSubtitleUrl(info),
+            audioUri = audioUri
         )
     }
 

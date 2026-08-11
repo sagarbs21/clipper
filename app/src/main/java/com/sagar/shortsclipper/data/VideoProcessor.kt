@@ -9,12 +9,15 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.GaussianBlurWithFrameOverlaid
 import androidx.media3.effect.Presentation
 import androidx.media3.transformer.Composition
+import androidx.media3.transformer.DefaultEncoderFactory
 import androidx.media3.transformer.EditedMediaItem
+import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.ProgressHolder
 import androidx.media3.transformer.Transformer
+import androidx.media3.transformer.VideoEncoderSettings
 import com.sagar.shortsclipper.model.CropMode
 import java.io.File
 
@@ -40,11 +43,13 @@ class VideoProcessor(private val context: Context) {
 
     fun export(
         inputUri: String,
+        audioUri: String?,
         startMs: Long,
         endMs: Long,
         cropMode: CropMode,
         outWidth: Int,
         outHeight: Int,
+        bitrate: Int,
         sourceWidth: Int,
         sourceHeight: Int,
         outputPath: String,
@@ -63,7 +68,17 @@ class VideoProcessor(private val context: Context) {
         // Transformer fails if the output path already exists; clear any stale file.
         File(outputPath).takeIf { it.exists() }?.delete()
 
+        // Without this the encoder falls back to Media3's heuristic, which is well
+        // below what a Short deserves at these resolutions.
+        val encoderFactory = DefaultEncoderFactory.Builder(context)
+            .setRequestedVideoEncoderSettings(
+                VideoEncoderSettings.Builder().setBitrate(bitrate).build()
+            )
+            .setEnableFallback(true)
+            .build()
+
         val t = Transformer.Builder(context)
+            .setEncoderFactory(encoderFactory)
             .addListener(object : Transformer.Listener {
                 override fun onCompleted(composition: Composition, result: ExportResult) {
                     callback.onDone(outputPath)
@@ -90,9 +105,28 @@ class VideoProcessor(private val context: Context) {
         }
 
         val edited = EditedMediaItem.Builder(mediaItem)
+            .setRemoveAudio(audioUri != null)
             .setEffects(Effects(emptyList(), videoEffects))
             .build()
-        t.start(edited, outputPath)
+
+        if (audioUri == null) {
+            t.start(edited, outputPath)
+            return
+        }
+
+        // Adaptive YouTube sources arrive as two URLs. One video sequence plus one
+        // audio sequence is the multi-sequence case Media3 1.3.1 does support.
+        val audioItem = EditedMediaItem.Builder(
+            MediaItem.Builder().setUri(audioUri).setClippingConfiguration(clipping).build()
+        ).setRemoveVideo(true).build()
+
+        t.start(
+            Composition.Builder(
+                EditedMediaItemSequence(edited),
+                EditedMediaItemSequence(audioItem)
+            ).build(),
+            outputPath
+        )
     }
 
     private fun fitEffects(outWidth: Int, outHeight: Int, layout: Int): List<Effect> =

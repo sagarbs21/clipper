@@ -51,6 +51,12 @@ otherwise the one baked in at build time:
 
 1. **In-app (simplest):** paste it into **Settings → Gemini API key**. Saved locally on the
    device; survives restarts. No rebuild needed.
+
+   > If saved settings keep vanishing, it's the install rather than the app. CI runners are
+   > ephemeral, so each build used to be signed with a fresh random debug key; a changed
+   > signature forces an uninstall, and uninstalling wipes app data. The workflow now caches
+   > one debug keystore across runs so new APKs install as plain updates. You'll need one
+   > last uninstall to move onto the cached key.
 2. **Local build (Android Studio):** add to `local.properties` (already git-ignored):
 
    ```properties
@@ -66,12 +72,30 @@ otherwise the one baked in at build time:
 > GitHub secrets keep it out of git. Note that any key baked into an APK can be extracted
 > from that APK, so don't share the built APK publicly, and consider restricting the key in
 > Google AI Studio. The in-app option keeps the key only on your device.
-- For **YouTube** videos the app sends the **captions transcript** (when available) plus
-  title/duration so the model can reason about actual moments. For **local files** or
-  caption-less videos it works from the title/duration only (less accurate).
-- **Privacy:** AI mode sends that text (transcript + title) to Google's Gemini API.
-  Manual clipping sends nothing — it's fully on-device. The API key is stored only in
-  local app preferences.
+### How a clip actually gets chosen
+
+The model never picks timestamps out of thin air. Two passes feed it first:
+
+1. **On-device analysis.** The app scans the compressed stream in a single pass without
+   decoding it, and records how many bytes each second holds. Video bitrate rises with
+   motion and scene changes; audio bitrate rises through loud, dense passages, which is
+   what a laugh, a goal or a drop looks like. It then scores every 30-second window,
+   keeps the busiest non-overlapping ones, and snaps each start onto a real shot change
+   (a sync sample) so clips don't open mid-shot.
+2. **Captions.** For YouTube videos with subtitles, the timestamped transcript goes in too.
+
+The model receives those candidate windows with their loudness/motion scores, and ranks,
+trims and names them. The status line tells you what a given run was based on, so you can
+tell a measured suggestion from a guess.
+
+Local files are scanned directly. For YouTube the app scans the **audio-only** track,
+which is a few MB rather than the whole video. A 360p muxed fallback is skipped rather
+than pulling the entire file down, and in that case suggestions fall back to captions or,
+failing that, rough guesses — which the status line says outright.
+
+- **Privacy:** AI mode sends text (transcript, title, and the candidate timings) to your
+  chosen provider. The scan itself is entirely on-device, and manual clipping sends
+  nothing at all. The API key is stored only in local app preferences.
 - **"Trends":** suggestions reflect the model's knowledge + prompt guidance, **not**
   live trend scraping. Treat them as a smart starting point, not a guarantee.
 - **Busy/timeout (HTTP 503):** Gemini's free tier can be momentarily overloaded. The app
@@ -81,7 +105,10 @@ otherwise the one baked in at build time:
 
 ## Settings
 
-- **Output quality:** `1080p` (1080x1920) or `720p` (720x1280, smaller files).
+- **Output quality:** `720p`, `1080p`, `1440p` or `4K`, always 9:16, encoded at 6 / 12 /
+  24 / 45 Mbps respectively. Higher isn't just a bigger file: a 1920x1080 source fitted
+  into a 1080-wide vertical canvas is squeezed to 1080x607, so most of the original detail
+  is discarded before encoding. A taller canvas keeps more of it.
 - **AI provider + key + model:** enables AI suggestions and metadata (see above).
 - **YouTube account:** connect to upload clips (see next section).
 - The app warns on clips longer than **3 minutes** (YouTube Shorts limit) and does a
@@ -202,8 +229,10 @@ To produce a shareable APK instead:
 
 ## Important notes
 
-- **Source quality:** muxed (single-file) YouTube streams typically top out at 720p.
-  The output is still encoded at 1080x1920; 720p source is fine for Shorts.
+- **Source quality:** YouTube has retired every muxed (single-file) stream above 360p,
+  so the app takes the best **video-only** stream and merges the separate audio track
+  back in, both for the preview and the export. If only a muxed stream exists you get
+  360p and a warning-free fallback.
 - **NewPipeExtractor may need updating** over time as YouTube changes. If fetching
   stops working, bump the `NewPipeExtractor` version in `app/build.gradle.kts`
   to the latest tag from https://github.com/TeamNewPipe/NewPipeExtractor/releases

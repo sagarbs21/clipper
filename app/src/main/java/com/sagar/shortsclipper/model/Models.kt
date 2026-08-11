@@ -15,7 +15,12 @@ data class VideoMeta(
     val subtitleVttUrl: String? = null,
     /** Displayed frame size (rotation applied), or 0 when unknown. Drives blurred fill. */
     val sourceWidth: Int = 0,
-    val sourceHeight: Int = 0
+    val sourceHeight: Int = 0,
+    /**
+     * Separate audio track URL. YouTube only keeps a 360p muxed stream, so anything
+     * sharper arrives as video-only and the audio has to be merged back in.
+     */
+    val audioUri: String? = null
 )
 
 /** How the source frame is mapped into the 9:16 output. */
@@ -30,10 +35,23 @@ enum class CropMode(val label: String, val hint: String) {
     STRETCH("Stretch", "Fills the screen by squeezing the frame. Distorts faces.")
 }
 
-/** Output resolution / size preset (always 9:16). */
-enum class OutputQuality(val label: String, val width: Int, val height: Int) {
-    FHD("1080p", 1080, 1920),
-    HD("720p (smaller)", 720, 1280)
+/**
+ * Output resolution / size preset (always 9:16), with the video bitrate to encode at.
+ *
+ * Height matters more than it looks: a 16:9 source fitted into a 1080-wide canvas is
+ * squeezed down to 1080x607, so most of the original detail is thrown away before
+ * encoding. Taller canvases keep more of it, at the cost of file size.
+ */
+enum class OutputQuality(
+    val label: String,
+    val width: Int,
+    val height: Int,
+    val bitrate: Int
+) {
+    HD("720p · smallest", 720, 1280, 6_000_000),
+    FHD("1080p", 1080, 1920, 12_000_000),
+    QHD("1440p · sharper", 1440, 2560, 24_000_000),
+    UHD("4K · sharpest", 2160, 3840, 45_000_000)
 }
 
 /**
@@ -58,6 +76,17 @@ data class ClipSpec(
     val start: String = "0:00",
     val end: String = "0:30",
     val name: String = ""
+)
+
+/**
+ * A moment the on-device pass flagged as promising, before any AI is involved.
+ * [loudness] and [motion] are 0..1 relative to the rest of the same video.
+ */
+data class ClipCandidate(
+    val startSec: Double,
+    val endSec: Double,
+    val loudness: Double,
+    val motion: Double
 )
 
 /** One AI-proposed clip. */

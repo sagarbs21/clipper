@@ -54,6 +54,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem as ExoMediaItem
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.ui.PlayerView
 import com.sagar.shortsclipper.model.AiProvider
 import com.sagar.shortsclipper.model.CropMode
@@ -104,13 +106,26 @@ fun ClipperScreen(vm: ClipViewModel) {
         onDispose { exoPlayer.release() }
     }
     val sourceUri = vm.meta?.sourceUri
-    LaunchedEffect(sourceUri) {
+    val audioUri = vm.meta?.audioUri
+    LaunchedEffect(sourceUri, audioUri) {
+        when {
+            sourceUri == null -> exoPlayer.clearMediaItems()
+            audioUri == null -> exoPlayer.setMediaItem(ExoMediaItem.fromUri(sourceUri))
+            else -> {
+                // Anything sharper than 360p comes off YouTube as a video-only stream,
+                // so the separate audio track has to be played alongside it.
+                val factory = DefaultMediaSourceFactory(context)
+                exoPlayer.setMediaSource(
+                    MergingMediaSource(
+                        factory.createMediaSource(ExoMediaItem.fromUri(sourceUri)),
+                        factory.createMediaSource(ExoMediaItem.fromUri(audioUri))
+                    )
+                )
+            }
+        }
         if (sourceUri != null) {
-            exoPlayer.setMediaItem(ExoMediaItem.fromUri(sourceUri))
             exoPlayer.prepare()
             exoPlayer.playWhenReady = false
-        } else {
-            exoPlayer.clearMediaItems()
         }
     }
 
@@ -217,16 +232,23 @@ fun ClipperScreen(vm: ClipViewModel) {
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutputQuality.values().forEach { q ->
                                 FilterChip(
                                     selected = vm.quality == q,
                                     onClick = { vm.updateQuality(q) },
                                     label = { Text(q.label) },
-                                    enabled = !vm.exporting
+                                    enabled = !vm.exporting && !vm.autoRunning
                                 )
                             }
                         }
+                        Text(
+                            "A wide video squeezed into a narrow vertical frame loses detail. " +
+                                "Picking a taller output keeps more of the original, at the " +
+                                "cost of a bigger file.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
 
                         Text(
                             "AI provider",

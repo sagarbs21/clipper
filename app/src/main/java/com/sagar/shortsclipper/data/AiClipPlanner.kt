@@ -3,6 +3,7 @@ package com.sagar.shortsclipper.data
 import com.sagar.shortsclipper.model.AiPlan
 import com.sagar.shortsclipper.model.AiProvider
 import com.sagar.shortsclipper.model.AiSuggestion
+import com.sagar.shortsclipper.model.ClipCandidate
 import com.sagar.shortsclipper.model.VideoMeta
 import com.sagar.shortsclipper.model.VideoMetadata
 import okhttp3.MediaType.Companion.toMediaType
@@ -45,11 +46,12 @@ object AiClipPlanner {
         model: String,
         meta: VideoMeta,
         transcript: String?,
+        candidates: List<ClipCandidate>,
         apiKey: String,
         maxClips: Int,
         maxClipSec: Int
     ): AiPlan {
-        val prompt = buildPrompt(meta, transcript, maxClips, maxClipSec)
+        val prompt = buildPrompt(meta, transcript, candidates, maxClips, maxClipSec)
         val text = completeWithRetry(provider, model, prompt, apiKey)
         return parsePlan(text, meta.durationSec, maxClipSec)
     }
@@ -177,13 +179,41 @@ object AiClipPlanner {
     private fun buildPrompt(
         meta: VideoMeta,
         transcript: String?,
+        candidates: List<ClipCandidate>,
         maxClips: Int,
         maxClipSec: Int
     ): String {
         val transcriptBlock = if (!transcript.isNullOrBlank()) {
             "Timestamped transcript (use these timestamps):\n$transcript"
         } else {
-            "(No transcript available. Infer likely structure from the title and duration.)"
+            "(No transcript available.)"
+        }
+        val candidateBlock = if (candidates.isNotEmpty()) {
+            val rows = candidates.joinToString("\n") { c ->
+                "  %.0fs-%.0fs  loudness %.2f  motion %.2f".format(
+                    c.startSec, c.endSec, c.loudness, c.motion
+                )
+            }
+            """
+            The app measured the actual media on the device and found these candidate
+            windows. "loudness" is how loud and dense the audio is and "motion" is how
+            much the picture is changing, both 0..1 relative to the rest of this video.
+            High loudness usually marks a reaction, a punchline, a goal or a drop.
+            These windows already start on a real shot change.
+
+            $rows
+
+            Build your clips from these windows. You may move a boundary by a few
+            seconds to start on a cleaner beat or avoid cutting a sentence in half.
+            Only propose a moment outside them if the transcript clearly shows
+            something better, and say so in "reason".
+            """.trimIndent()
+        } else if (!transcript.isNullOrBlank()) {
+            "No on-device signal was available, so rely on the transcript timestamps."
+        } else {
+            "No transcript and no on-device signal are available, so your timings are " +
+                "necessarily rough. Spread the clips across the duration and say in " +
+                "\"reason\" that the timing is a guess."
         }
         return """
             You are an expert short-form video editor who makes viral vertical Shorts.
@@ -210,6 +240,9 @@ object AiClipPlanner {
             Video title: ${meta.title}
             Uploader: ${meta.uploader}
             Duration (sec): ${meta.durationSec}
+
+            $candidateBlock
+
             $transcriptBlock
         """.trimIndent()
     }

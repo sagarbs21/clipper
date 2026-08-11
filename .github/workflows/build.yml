@@ -26,6 +26,16 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      # Runners are ephemeral, so without this each build generates a new random
+      # debug keystore. A different signature forces an uninstall before the APK
+      # can be installed, which wipes the saved API key and YouTube tokens.
+      # Reusing one cached key means new builds install as plain updates.
+      - name: Reuse the debug signing key across builds
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: android-debug-keystore-v1
+
       # The ubuntu-latest runner ships with the Android SDK (ANDROID_HOME set),
       # including API 34, so AGP can build without extra setup.
       # GEMINI_API_KEY is read from a repo secret and baked into BuildConfig.

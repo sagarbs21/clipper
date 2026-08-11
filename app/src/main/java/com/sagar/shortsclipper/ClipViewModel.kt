@@ -13,6 +13,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.sagar.shortsclipper.data.AiClipPlanner
 import com.sagar.shortsclipper.data.CaptionsRepository
+import com.sagar.shortsclipper.data.ContentAnalyzer
 import com.sagar.shortsclipper.data.LocalVideoRepository
 import com.sagar.shortsclipper.data.MediaStoreSaver
 import com.sagar.shortsclipper.data.Prefs
@@ -21,6 +22,7 @@ import com.sagar.shortsclipper.data.VideoProcessor
 import com.sagar.shortsclipper.data.YouTubeUploader
 import com.sagar.shortsclipper.data.YoutubeRepository
 import com.sagar.shortsclipper.model.AiProvider
+import com.sagar.shortsclipper.model.ClipCandidate
 import com.sagar.shortsclipper.model.ClipSpec
 import com.sagar.shortsclipper.model.CropMode
 import com.sagar.shortsclipper.model.ExportedClip
@@ -99,6 +101,10 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Probed frame size per source URI, so a remote probe only happens once. */
     private var probedSize: Pair<String, Pair<Int, Int>>? = null
+
+    /** Cached on-device analysis, keyed by source, so re-running AI is cheap. */
+    private var analyzedFor: String? = null
+    private var analyzedCandidates: List<ClipCandidate> = emptyList()
 
     fun updateQuality(q: OutputQuality) {
         quality = q
@@ -375,19 +381,23 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
 
         suggesting = true
         contentType = null
-        status = "Analyzing with AI..."
+        status = "Reading the video to find the busy moments..."
         viewModelScope.launch {
             try {
+                val candidates = analyzeCandidates(m)
+                status = "Fetching captions..."
                 val transcript = withContext(Dispatchers.IO) {
                     m.subtitleVttUrl?.let { CaptionsRepository.fetchTranscript(it) }
                 }
                 lastTranscript = transcript
+                status = "Asking the AI to pick the best moments..."
                 val plan = withContext(Dispatchers.IO) {
                     AiClipPlanner.plan(
                         provider = provider,
                         model = model.ifBlank { provider.defaultModel },
                         meta = m,
                         transcript = transcript,
+                        candidates = candidates,
                         apiKey = key,
                         maxClips = AI_MAX_CLIPS,
                         maxClipSec = AI_MAX_CLIP_SEC
@@ -408,8 +418,8 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
                             )
                         )
                     }
-                    val src = if (transcript != null) "captions" else "title only"
-                    status = "AI suggested ${clips.size} clip(s) • detected: ${plan.contentType} • based on $src. Review, then export."
+                    status = "AI suggested ${clips.size} clip(s) • detected: ${plan.contentType}" +
+                        " • based on ${basisLabel(candidates, transcript)}. Review, then export."
                 }
             } catch (e: Exception) {
                 status = "AI suggestion failed: ${e.message ?: e.javaClass.simpleName}"
@@ -446,17 +456,20 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
                 val m = withContext(Dispatchers.IO) { YoutubeRepository.fetch(u) }
                 meta = m
 
-                status = "Auto-clip: finding the best moments..."
+                status = "Auto-clip: reading the video to find the busy moments..."
+                val candidates = analyzeCandidates(m)
                 val transcript = withContext(Dispatchers.IO) {
                     m.subtitleVttUrl?.let { CaptionsRepository.fetchTranscript(it) }
                 }
                 lastTranscript = transcript
+                status = "Auto-clip: picking the best moments..."
                 val plan = withContext(Dispatchers.IO) {
                     AiClipPlanner.plan(
                         provider = provider,
                         model = model.ifBlank { provider.defaultModel },
                         meta = m,
                         transcript = transcript,
+                        candidates = candidates,
                         apiKey = key,
                         maxClips = AI_MAX_CLIPS,
                         maxClipSec = AI_MAX_CLIP_SEC
@@ -498,7 +511,7 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
                         .apply { mkdirs() }
                     val outFile = File(exportsDir, "$safeName-${System.currentTimeMillis()}.mp4")
 
-                    exportOne(m.sourceUri, startMs, endMs, q.width, q.height, srcW, srcH, outFile)
+                    exportOne(m, startMs, endMs, q, srcW, srcH, outFile)
                     saveCopyToGallery(outFile, safeName)
 
                     val exportedId = nextId++
@@ -516,7 +529,8 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 progress = 100
                 status = if (saved > 0) {
-                    "Auto-clip done • detected: ${plan.contentType} • $saved clip(s) ready below. Review & upload."
+                    "Auto-clip done • detected: ${plan.contentType} • based on " +
+                        "${basisLabel(candidates, transcript)} • $saved clip(s) ready below."
                 } else {
                     "Auto-clip: nothing exported. Check the video."
                 }
@@ -566,7 +580,8 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
             val e = parseTimeToMs(c.end) ?: 0L
             ((e - s).coerceAtLeast(0L)) / 1000
         }
-        val estimatedBytes = totalClipSec * BYTES_PER_SEC_ESTIMATE * 2
+        // Temp file plus the gallery copy, at the bitrate this preset actually encodes at.
+        val estimatedBytes = totalClipSec * (quality.bitrate / 8) * 2
         val usable = getApplication<Application>().cacheDir.usableSpace
         if (usable in 1 until estimatedBytes) {
             status = "Low storage: ~${estimatedBytes / (1024 * 1024)} MB may be needed. Free some space and retry."
@@ -600,7 +615,7 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
                         .apply { mkdirs() }
                     val outFile = File(exportsDir, "$safeName-${System.currentTimeMillis()}.mp4")
 
-                    exportOne(m.sourceUri, startMs, endMs, q.width, q.height, srcW, srcH, outFile)
+                    exportOne(m, startMs, endMs, q, srcW, srcH, outFile)
                     saveCopyToGallery(outFile, safeName)
 
                     val exportedId = nextId++
@@ -632,6 +647,42 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
                 exporting = false
             }
         }
+    }
+
+    /**
+     * Reads the media itself to find moments worth clipping, so the model ranks real
+     * candidates instead of inventing timestamps. For adaptive YouTube sources we scan
+     * the audio-only track, which is a few MB rather than the whole video; for a plain
+     * 360p muxed stream we skip it rather than pull the entire file down.
+     */
+    private suspend fun analyzeCandidates(m: VideoMeta): List<ClipCandidate> {
+        if (analyzedFor == m.sourceUri) return analyzedCandidates
+        val target = if (m.isLocal) m.sourceUri else m.audioUri
+        if (target == null) return emptyList()
+
+        val found = withContext(Dispatchers.IO) {
+            val analysis = ContentAnalyzer.analyze(
+                getApplication<Application>(), target, m.durationSec
+            )
+            if (analysis == null || !analysis.hasSignal) {
+                emptyList()
+            } else {
+                ContentAnalyzer.candidates(
+                    analysis, m.durationSec, AI_CANDIDATE_SEC, AI_CANDIDATES
+                )
+            }
+        }
+        analyzedFor = m.sourceUri
+        analyzedCandidates = found
+        return found
+    }
+
+    /** Tells the user how much the suggestions actually rest on. */
+    private fun basisLabel(candidates: List<ClipCandidate>, transcript: String?): String = when {
+        candidates.isNotEmpty() && transcript != null -> "on-device analysis + captions"
+        candidates.isNotEmpty() -> "on-device analysis of the audio and video"
+        transcript != null -> "captions only"
+        else -> "title only (rough timings)"
     }
 
     /** Only blurred fill needs the source shape, and probing a remote stream isn't free. */
@@ -692,11 +743,10 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun exportOne(
-        inputUri: String,
+        meta: VideoMeta,
         startMs: Long,
         endMs: Long,
-        outWidth: Int,
-        outHeight: Int,
+        quality: OutputQuality,
         sourceWidth: Int,
         sourceHeight: Int,
         outFile: File
@@ -706,12 +756,14 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
         // Transformer must be started on the main thread (it needs a Looper).
         withContext(Dispatchers.Main) {
             processor.export(
-                inputUri = inputUri,
+                inputUri = meta.sourceUri,
+                audioUri = meta.audioUri,
                 startMs = startMs,
                 endMs = endMs,
                 cropMode = cropMode,
-                outWidth = outWidth,
-                outHeight = outHeight,
+                outWidth = quality.width,
+                outHeight = quality.height,
+                bitrate = quality.bitrate,
                 sourceWidth = sourceWidth,
                 sourceHeight = sourceHeight,
                 outputPath = outFile.absolutePath,
@@ -766,7 +818,8 @@ class ClipViewModel(app: Application) : AndroidViewModel(app) {
     companion object {
         private const val AI_MAX_CLIPS = 5
         private const val AI_MAX_CLIP_SEC = 60
-        // Upper-bound estimate (~1.3 MB/s at 1080p) used only for the storage pre-check.
-        private const val BYTES_PER_SEC_ESTIMATE = 1_300_000L
+        // Hand the model more candidates than it needs so it has room to choose.
+        private const val AI_CANDIDATES = 12
+        private const val AI_CANDIDATE_SEC = 30
     }
 }
