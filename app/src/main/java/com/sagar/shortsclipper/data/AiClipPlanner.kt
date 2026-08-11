@@ -13,6 +13,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 /**
@@ -190,8 +191,9 @@ object AiClipPlanner {
         }
         val candidateBlock = if (candidates.isNotEmpty()) {
             val rows = candidates.joinToString("\n") { c ->
+                // Fixed locale: a comma decimal separator would reach the model as one.
                 "  %.0fs-%.0fs  loudness %.2f  motion %.2f".format(
-                    c.startSec, c.endSec, c.loudness, c.motion
+                    Locale.US, c.startSec, c.endSec, c.loudness, c.motion
                 )
             }
             """
